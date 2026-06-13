@@ -9,5 +9,5 @@
         backendUrl: "https://pulse-messenger-api.onrender.com"
    ============================================================ */
 window.PULSE_CONFIG = {
-  backendUrl: ""
+  backendUrl: "https://pulse-messenger-api.onrender.com"
 };
