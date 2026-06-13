@@ -14,13 +14,19 @@ works straight from the repo root — no "Root Directory" setting required.
 
 import os
 
-# This shim is only used in production, where we serve with a gunicorn eventlet
-# worker. Default the real-time engine to eventlet (so it matches the worker) and
-# monkey-patch BEFORE the backend and its dependencies are imported.
-os.environ.setdefault("SOCKETIO_ASYNC_MODE", "eventlet")
+# This shim runs in production under gunicorn. Match the real-time engine to the
+# gunicorn worker class and monkey-patch BEFORE the backend and its dependencies
+# are imported. Defaults to eventlet; set SOCKETIO_ASYNC_MODE=gevent (with a gevent
+# worker) or =threading (with the gthread worker) to switch engines.
+_async_mode = os.environ.setdefault("SOCKETIO_ASYNC_MODE", "eventlet")
 
-import eventlet
-eventlet.monkey_patch()
+if _async_mode == "eventlet":
+    import eventlet
+    eventlet.monkey_patch()
+elif _async_mode == "gevent":
+    from gevent import monkey
+    monkey.patch_all()
+# "threading" mode needs no monkey-patching.
 
 import sys
 import importlib.util
