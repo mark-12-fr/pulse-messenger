@@ -1,0 +1,26 @@
+{
+  "name": "realtime-messenger",
+  "version": "1.0.0",
+  "description": "A professional real-time messenger with chat, friends, and media sharing",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "messenger",
+    "chat",
+    "realtime",
+    "socket.io"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.1.1",
+    "socket.io": "^4.8.1"
+  }
+}

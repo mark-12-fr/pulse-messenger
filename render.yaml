@@ -1,0 +1,29 @@
+# Render Blueprint — deploys the Flask backend.
+# In the Render dashboard: New + > Blueprint, then point it at this repo.
+# You will be asked to fill in the values marked `sync: false` below.
+services:
+  - type: web
+    name: pulse-messenger-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k eventlet -w 1 --bind 0.0.0.0:$PORT app:app
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SOCKETIO_ASYNC_MODE
+        value: eventlet
+      - key: JWT_SECRET
+        generateValue: true          # Render generates a strong secret
+      - key: SUPABASE_BUCKET
+        value: media
+      - key: DATABASE_URL
+        sync: false                  # paste your Supabase Postgres connection string
+      - key: SUPABASE_URL
+        sync: false                  # https://YOUR-PROJECT-REF.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false                  # Supabase > Project Settings > API > service_role key
+      - key: FRONTEND_ORIGIN
+        sync: false                  # https://your-app.vercel.app

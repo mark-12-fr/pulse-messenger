@@ -1,0 +1,473 @@
+"""
+Pulse Messenger — Flask backend (deploy to Render).
+
+  - REST API (auth, friends, search, conversations, upload)
+  - Socket.IO real-time messaging, presence, typing, read receipts
+  - SQLAlchemy storage (SQLite locally, Supabase Postgres in production)
+"""
+
+import os
+
+# Decide the async mode from the OS environment and, when using eventlet/gevent,
+# monkey-patch the standard library BEFORE importing anything else (otherwise
+# locks created by other modules are not "greened"). Production (Render) sets
+# SOCKETIO_ASYNC_MODE as a real environment variable; local dev stays "threading".
+ASYNC_MODE = os.environ.get("SOCKETIO_ASYNC_MODE", "threading")
+if ASYNC_MODE == "eventlet":
+    import eventlet
+    eventlet.monkey_patch()
+elif ASYNC_MODE == "gevent":
+    from gevent import monkey
+    monkey.patch_all()
+
+from dotenv import load_dotenv
+
+load_dotenv()  # load .env for local development
+
+# Make psycopg2 cooperative with the chosen green-thread library.
+if ASYNC_MODE == "eventlet":
+    try:
+        from psycogreen.eventlet import patch_psycopg
+        patch_psycopg()
+    except Exception:
+        pass
+elif ASYNC_MODE == "gevent":
+    try:
+        from psycogreen.gevent import patch_psycopg
+        patch_psycopg()
+    except Exception:
+        pass
+
+import re
+import secrets
+import functools
+from datetime import datetime, timedelta, timezone
+
+import jwt
+from flask import Flask, request, jsonify, g, send_from_directory
+from flask_cors import CORS
+from flask_socketio import SocketIO, join_room, ConnectionRefusedError
+from werkzeug.security import generate_password_hash, check_password_hash
+
+import db
+import storage
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+db.init_db()
+
+JWT_SECRET = os.environ.get("JWT_SECRET") or secrets.token_hex(32)
+if not os.environ.get("JWT_SECRET"):
+    print("[warn] JWT_SECRET not set - using a random one (tokens reset on restart). "
+          "Set JWT_SECRET in production!")
+
+_origin_env = os.environ.get("FRONTEND_ORIGIN", "*")
+ORIGINS = "*" if _origin_env.strip() == "*" else [o.strip() for o in _origin_env.split(",") if o.strip()]
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB uploads
+CORS(app, resources={r"/api/*": {"origins": ORIGINS}})
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=ORIGINS,
+    async_mode=ASYNC_MODE,
+    max_http_buffer_size=2 * 1024 * 1024,
+)
+
+AVATAR_COLORS = [
+    "#0084ff", "#7646ff", "#ff5e3a", "#13b955", "#ff9500",
+    "#e0457b", "#00b8d4", "#8e44ad", "#16a085", "#d35400",
+]
+USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,20}$")
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+def sign_token(user):
+    payload = {
+        "id": user["id"],
+        "username": user["username"],
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def user_from_token(token):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return db.get_user_by_id(payload["id"])
+    except Exception:
+        return None
+
+
+def auth_required(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        header = request.headers.get("Authorization", "")
+        token = header[7:] if header.startswith("Bearer ") else None
+        user = user_from_token(token) if token else None
+        if not user:
+            return jsonify(error="Not authenticated"), 401
+        g.user = user
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# Presence (in-memory; run a single worker, see render.yaml)
+# ---------------------------------------------------------------------------
+online = {}        # user_id -> set(sid)
+sid_user = {}      # sid -> user_id
+
+
+def is_online(uid):
+    return uid in online and len(online[uid]) > 0
+
+
+def emit_to_user(uid, event, data):
+    socketio.emit(event, data, room=f"user:{uid}")
+
+
+def broadcast_presence(uid, up):
+    me = db.get_user_by_id(uid)
+    last_seen = me["lastSeen"] if me else None
+    for f in db.list_friends(uid):
+        emit_to_user(f["id"], "presence", {"userId": uid, "online": up, "lastSeen": last_seen})
+
+
+def notify_friend_accepted(a, b):
+    conv = db.get_or_create_conversation(a, b)
+    ua, ub = db.get_user_by_id(a), db.get_user_by_id(b)
+    emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": is_online(b), "conversationId": conv["id"]}})
+    emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": is_online(a), "conversationId": conv["id"]}})
+
+
+# ---------------------------------------------------------------------------
+# Health / root
+# ---------------------------------------------------------------------------
+@app.get("/")
+def root():
+    return jsonify(name="Pulse Messenger API", status="ok", storage="supabase" if storage.using_supabase() else "local")
+
+
+@app.get("/api/health")
+def health():
+    return jsonify(status="ok")
+
+
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+@app.post("/api/register")
+def register():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip().lower()
+    display_name = str(data.get("displayName", "")).strip()
+    password = str(data.get("password", ""))
+
+    if not USERNAME_RE.match(username):
+        return jsonify(error="Username must be 3-20 characters (letters, numbers, _ or . only)."), 400
+    if not (1 <= len(display_name) <= 40):
+        return jsonify(error="Display name must be 1-40 characters."), 400
+    if len(password) < 6:
+        return jsonify(error="Password must be at least 6 characters."), 400
+    if db.username_exists(username):
+        return jsonify(error="That username is already taken."), 409
+
+    password_hash = generate_password_hash(password, method="pbkdf2:sha256")
+    avatar_color = secrets.choice(AVATAR_COLORS)
+    user = db.create_user(username, display_name, password_hash, avatar_color)
+    return jsonify(token=sign_token(user), user=user)
+
+
+@app.post("/api/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip().lower()
+    password = str(data.get("password", ""))
+
+    user = db.get_auth_user(username)
+    if not user or not check_password_hash(user["passwordHash"], password):
+        return jsonify(error="Wrong username or password."), 401
+    user.pop("passwordHash", None)
+    return jsonify(token=sign_token(user), user=user)
+
+
+@app.get("/api/me")
+@auth_required
+def me():
+    return jsonify(user=g.user)
+
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+@app.get("/api/users/search")
+@auth_required
+def search():
+    q = str(request.args.get("q", "")).strip()
+    if not q:
+        return jsonify(users=[])
+    rows = db.search_users(g.user["id"], q)
+    users = [
+        {**u, "online": is_online(u["id"]), "relationship": db.relationship(g.user["id"], u["id"])}
+        for u in rows
+    ]
+    return jsonify(users=users)
+
+
+# ---------------------------------------------------------------------------
+# Friends
+# ---------------------------------------------------------------------------
+@app.post("/api/friends/request")
+@auth_required
+def friend_request():
+    data = request.get_json(silent=True) or {}
+    target_id = int(data.get("userId") or 0)
+    me_id = g.user["id"]
+    if not target_id or target_id == me_id:
+        return jsonify(error="Invalid user."), 400
+    if not db.get_user_by_id(target_id):
+        return jsonify(error="User not found."), 404
+
+    existing = db.find_friendship(me_id, target_id)
+    if existing:
+        if existing["status"] == "accepted":
+            return jsonify(error="You are already friends."), 409
+        # They already requested me -> accept instead of duplicating.
+        if existing["addressee_id"] == me_id:
+            db.accept_friendship(existing["id"])
+            notify_friend_accepted(me_id, target_id)
+            return jsonify(ok=True, status="accepted")
+        return jsonify(error="Friend request already sent."), 409
+
+    db.create_friend_request(me_id, target_id)
+    emit_to_user(target_id, "friend:request", {"from": {**g.user, "online": is_online(me_id)}})
+    return jsonify(ok=True, status="pending")
+
+
+@app.post("/api/friends/respond")
+@auth_required
+def friend_respond():
+    data = request.get_json(silent=True) or {}
+    request_id = int(data.get("requestId") or 0)
+    action = str(data.get("action", ""))
+    fr = db.get_friendship_by_id(request_id)
+    if not fr or fr["addressee_id"] != g.user["id"] or fr["status"] != "pending":
+        return jsonify(error="Request not found."), 404
+
+    if action == "accept":
+        db.accept_friendship(request_id)
+        notify_friend_accepted(fr["requester_id"], fr["addressee_id"])
+        return jsonify(ok=True, status="accepted")
+    if action == "decline":
+        db.delete_friendship(request_id)
+        return jsonify(ok=True, status="declined")
+    return jsonify(error="Invalid action."), 400
+
+
+@app.get("/api/friends")
+@auth_required
+def friends():
+    me_id = g.user["id"]
+    rows = db.list_friends(me_id)
+    out = []
+    for u in rows:
+        conv = db.get_or_create_conversation(me_id, u["id"])
+        out.append({**u, "online": is_online(u["id"]), "conversationId": conv["id"]})
+    return jsonify(friends=out)
+
+
+@app.get("/api/friends/requests")
+@auth_required
+def friend_requests():
+    me_id = g.user["id"]
+    incoming = [{**r, "online": is_online(r["id"])} for r in db.incoming_requests(me_id)]
+    outgoing = db.outgoing_requests(me_id)
+    return jsonify(incoming=incoming, outgoing=outgoing)
+
+
+# ---------------------------------------------------------------------------
+# Conversations & messages
+# ---------------------------------------------------------------------------
+@app.get("/api/conversations")
+@auth_required
+def conversations():
+    return jsonify(conversations=db.list_conversations(g.user["id"]))
+
+
+@app.get("/api/conversations/<int:cid>/messages")
+@auth_required
+def conversation_messages(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Conversation not found."), 404
+
+    partner_id = db.conversation_partner_id(conv, me_id)
+    partner = db.get_user_by_id(partner_id)
+    messages = db.get_messages(cid)
+
+    if messages:
+        last_id = messages[-1]["id"]
+        db.mark_read(cid, me_id, last_id)
+        emit_to_user(partner_id, "message:read",
+                     {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": last_id})
+
+    return jsonify(
+        messages=messages,
+        friend={**partner, "online": is_online(partner_id)},
+        partnerLastRead=db.get_last_read(cid, partner_id),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Upload
+# ---------------------------------------------------------------------------
+@app.post("/api/upload")
+@auth_required
+def upload():
+    f = request.files.get("file")
+    if not f:
+        return jsonify(error="No file uploaded."), 400
+    try:
+        info = storage.save_file(f)
+    except storage.TooLarge:
+        return jsonify(error="File is too large (max 50 MB)."), 400
+    except Exception:
+        return jsonify(error="Upload failed."), 400
+    return jsonify(info)
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    return jsonify(error="File is too large (max 50 MB)."), 413
+
+
+# Serve locally-stored uploads (only used when Supabase Storage is not configured).
+@app.get("/uploads/<path:filename>")
+def serve_upload(filename):
+    return send_from_directory(storage.LOCAL_DIR, filename)
+
+
+# ---------------------------------------------------------------------------
+# Socket.IO
+# ---------------------------------------------------------------------------
+@socketio.on("connect")
+def on_connect(auth):
+    token = auth.get("token") if isinstance(auth, dict) else None
+    user = user_from_token(token) if token else None
+    if not user:
+        raise ConnectionRefusedError("unauthorized")  # reject the connection
+    uid = user["id"]
+    sid = request.sid
+    sid_user[sid] = uid
+    was_offline = not is_online(uid)
+    online.setdefault(uid, set()).add(sid)
+    join_room(f"user:{uid}")
+    if was_offline:
+        db.set_last_seen(uid)
+        broadcast_presence(uid, True)
+
+
+@socketio.on("disconnect")
+def on_disconnect():
+    sid = request.sid
+    uid = sid_user.pop(sid, None)
+    if uid is None:
+        return
+    sids = online.get(uid)
+    if sids and sid in sids:
+        sids.discard(sid)
+        if not sids:
+            online.pop(uid, None)
+            db.set_last_seen(uid)
+            broadcast_presence(uid, False)
+
+
+@socketio.on("message:send")
+def on_message_send(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    to_user_id = int(payload.get("toUserId") or 0)
+    body = str(payload.get("body") or "")[:5000]
+    attachment = payload.get("attachment")
+
+    if not to_user_id:
+        return {"error": "Missing recipient."}
+    if not body and not attachment:
+        return {"error": "Empty message."}
+
+    fr = db.find_friendship(uid, to_user_id)
+    if not fr or fr["status"] != "accepted":
+        return {"error": "You can only message your friends."}
+
+    conv = db.get_or_create_conversation(uid, to_user_id)
+    msg = db.create_message(
+        conv["id"], uid, body,
+        attachment.get("url") if attachment else None,
+        attachment.get("type") if attachment else None,
+        attachment.get("name") if attachment else None,
+    )
+    db.mark_read(conv["id"], uid, msg["id"])
+
+    sender = db.get_user_by_id(uid)
+    recipient = db.get_user_by_id(to_user_id)
+    envelope = {"message": msg, "participants": {str(uid): sender, str(to_user_id): recipient}}
+
+    emit_to_user(uid, "message:new", envelope)
+    emit_to_user(to_user_id, "message:new", envelope)
+    return {"ok": True, "message": msg}
+
+
+@socketio.on("typing")
+def on_typing(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return
+    payload = payload or {}
+    to_user_id = int(payload.get("toUserId") or 0)
+    if not to_user_id:
+        return
+    fr = db.find_friendship(uid, to_user_id)
+    if not fr or fr["status"] != "accepted":
+        return
+    conv = db.get_or_create_conversation(uid, to_user_id)
+    emit_to_user(to_user_id, "typing", {
+        "conversationId": conv["id"],
+        "fromUserId": uid,
+        "isTyping": bool(payload.get("isTyping")),
+    })
+
+
+@socketio.on("message:read")
+def on_message_read(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return
+    payload = payload or {}
+    cid = int(payload.get("conversationId") or 0)
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, uid):
+        return
+    last = db.get_last_message(cid)
+    if not last:
+        return
+    db.mark_read(cid, uid, last["id"])
+    partner_id = db.conversation_partner_id(conv, uid)
+    emit_to_user(partner_id, "message:read",
+                 {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})
+
+
+# ---------------------------------------------------------------------------
+# Local dev entrypoint
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    print(f"\n  Pulse Messenger API (async_mode={ASYNC_MODE}, "
+          f"storage={'supabase' if storage.using_supabase() else 'local'})")
+    print(f"  -> http://localhost:{port}\n")
+    socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)

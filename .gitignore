@@ -1,0 +1,22 @@
+# ---- Python (backend) ----
+__pycache__/
+*.pyc
+backend/.venv/
+backend/venv/
+backend/.env
+backend/data/
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# ---- Node (archived version) ----
+node_modules/
+_node-version/node_modules/
+_node-version/data/
+_node-version/uploads/
+
+# ---- Misc ----
+.env
+*.log
+.DS_Store
+.vercel/
+.claude/settings.local.json
