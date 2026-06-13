@@ -10,6 +10,6 @@ psycopg2-binary==2.9.9
 PyJWT==2.9.0
 requests==2.32.3
 python-dotenv==1.0.1
-gunicorn==23.0.0
+gunicorn
 eventlet==0.36.1
 psycogreen==1.0.1
