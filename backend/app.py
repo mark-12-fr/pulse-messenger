@@ -546,8 +546,8 @@ def on_message_react(payload):
         return {"error": "Not authenticated."}
     payload = payload or {}
     message_id = int(payload.get("messageId") or 0)
-    emoji = str(payload.get("emoji") or "")
-    if not message_id or emoji not in ALLOWED_REACTIONS:
+    emoji = str(payload.get("emoji") or "").strip()
+    if not message_id or not emoji or len(emoji) > 12:
         return {"error": "Invalid reaction."}
     meta = db.get_message_meta(message_id)
     if not meta:

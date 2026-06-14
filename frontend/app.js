@@ -991,6 +991,7 @@
   // MESSAGE ACTIONS (react · unsend · copy) — long-press / right-click
   // ============================================================
   const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+  const EMOJI_PICKER = ['👍','👎','❤️','🔥','😂','🤣','😊','😍','🥰','😘','😎','🤩','😋','😅','😭','😢','😡','🤬','😱','😨','😴','🤔','🙄','😏','😬','🤗','🥺','🙏','👏','🙌','💪','👌','✌️','🤝','💯','✨','⭐','🎉','🎊','🥳','💀','👻','🤡','💩','🤖','👀','💔','💖','💕','💜','💙','💚','🧡','🤍','🌹','🌸','🍀','☀️','🌙','⚡','🍕','🍔','🍓','☕','🍵','🎂','🍻','⚽','🏀','🎮','🎵','📷','💸','🚀','🏆'];
   const messagesEl = $('#messages');
   let pressTimer = null;
   let touchState = null;
@@ -1086,6 +1087,7 @@
       <div class="mm-sheet">
         <div class="mm-reacts">
           ${REACTIONS.map((em) => `<button class="mm-react ${myReact && myReact.emoji === em ? 'on' : ''}" data-react="${em}">${em}</button>`).join('')}
+          <button class="mm-react mm-plus" data-emoji-more="1" aria-label="More emojis">+</button>
         </div>
         <div class="mm-actions">
           <button class="mm-act" data-reply="1">Reply</button>
@@ -1101,6 +1103,7 @@
     overlay.addEventListener('click', (e) => {
       const react = e.target.closest('[data-react]');
       if (react) { reactToMessage(mid, react.dataset.react); return close(); }
+      if (e.target.closest('[data-emoji-more]')) { close(); openEmojiPicker(mid); return; }
       if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
       if (e.target.closest('[data-unsend]')) { unsendMessage(mid); return close(); }
       if (e.target.closest('[data-copy]')) {
@@ -1109,6 +1112,29 @@
       }
       if (e.target.closest('[data-cancel]')) return close();
       // backdrop tap — ignore the trailing tap that opened the sheet
+      if (e.target === overlay && Date.now() - openedAt > 220) close();
+    });
+  }
+
+  function openEmojiPicker(mid) {
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet emoji-sheet">
+        <div class="settings-title">React</div>
+        <div class="emoji-grid">
+          ${EMOJI_PICKER.map((e) => `<button class="emoji-pick" data-emoji="${e}">${e}</button>`).join('')}
+        </div>
+        <button class="mm-act" data-cancel="1">Cancel</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const openedAt = Date.now();
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', (e) => {
+      const pick = e.target.closest('[data-emoji]');
+      if (pick) { reactToMessage(mid, pick.dataset.emoji); return close(); }
+      if (e.target.closest('[data-cancel]')) return close();
       if (e.target === overlay && Date.now() - openedAt > 220) close();
     });
   }

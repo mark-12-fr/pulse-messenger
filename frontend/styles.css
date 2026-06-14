@@ -694,6 +694,13 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .mm-react:hover { transform: scale(1.25); }
 .mm-react:active { transform: scale(1.1); }
 .mm-react.on { background: var(--active); }
+.mm-react.mm-plus { background: var(--hover); color: var(--text-soft); font-size: 24px; font-weight: 500; }
+
+.emoji-sheet { background: var(--elev); border: 1px solid var(--line); border-radius: 22px; padding: 6px; box-shadow: var(--shadow); }
+.emoji-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; max-height: 46vh; overflow-y: auto; padding: 6px; }
+.emoji-pick { border: none; background: transparent; font-size: 25px; padding: 7px 0; border-radius: 12px; transition: transform .1s var(--ease), background .12s var(--ease); }
+.emoji-pick:hover { background: var(--hover); }
+.emoji-pick:active { transform: scale(1.25); }
 .mm-actions { background: var(--elev); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); }
 .mm-act { display: block; width: 100%; border: none; background: transparent; color: var(--text); padding: 15px 18px; font-size: 16px; font-weight: 600; text-align: center; border-bottom: 1px solid var(--line); transition: background .15s; }
 .mm-act:last-child { border-bottom: none; }
