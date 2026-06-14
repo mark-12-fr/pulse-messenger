@@ -68,28 +68,41 @@ def save_file(file_storage):
     key = f"{int(time.time() * 1000)}-{secrets.token_hex(12)}{_safe_ext(file_storage.filename)}"
 
     if _SUPABASE_READY:
-        endpoint = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}"
-        resp = requests.post(
-            endpoint,
-            data=data,
-            headers={
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": mime,
-                "x-upsert": "true",
-            },
-            timeout=60,
-        )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Supabase upload failed ({resp.status_code}): {resp.text}")
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
-        return {
-            "url": public_url,
-            "type": attachment_type_for(mime),
-            "name": file_storage.filename,
-            "size": len(data),
-        }
+        try:
+            endpoint = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}"
+            resp = requests.post(
+                endpoint,
+                data=data,
+                headers={
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": mime,
+                    "x-upsert": "true",
+                },
+                timeout=60,
+            )
+            if resp.status_code in (200, 201):
+                public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
+                return {
+                    "url": public_url,
+                    "type": attachment_type_for(mime),
+                    "name": file_storage.filename,
+                    "size": len(data),
+                }
+            # Don't fail the whole upload — log the reason and fall back to local
+            # storage so the user can still send the photo. A 400/401/403 here
+            # usually means SUPABASE_SERVICE_ROLE_KEY is wrong (e.g. the anon key
+            # was used instead of the service_role key) or SUPABASE_URL is wrong.
+            print(
+                f"[storage] Supabase upload failed ({resp.status_code}): "
+                f"{resp.text[:300]} — falling back to local storage.",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[storage] Supabase upload error: {e!r} — falling back to local storage.", flush=True)
 
-    # Local fallback
+    # Local fallback (also used for local dev). NOTE: Render's disk is ephemeral,
+    # so files saved here disappear when the instance restarts — set
+    # SUPABASE_SERVICE_ROLE_KEY for permanent photo storage.
     with open(os.path.join(LOCAL_DIR, key), "wb") as fp:
         fp.write(data)
     return {
