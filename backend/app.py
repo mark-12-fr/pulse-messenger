@@ -50,6 +50,17 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, join_room, ConnectionRefusedError
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# Render's free tier has no outbound IPv6, so force IPv4 for all DNS resolution
+# (push services, Supabase Storage, …). Without this, connecting to an IPv6
+# address raises "Network is unreachable" / connection errors.
+import socket as _socket
+_orig_getaddrinfo = _socket.getaddrinfo
+def _ipv4_getaddrinfo(*args, **kwargs):
+    res = _orig_getaddrinfo(*args, **kwargs)
+    v4 = [r for r in res if r[0] == _socket.AF_INET]
+    return v4 or res
+_socket.getaddrinfo = _ipv4_getaddrinfo
+
 import db
 import storage
 import push
