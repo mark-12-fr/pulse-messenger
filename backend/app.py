@@ -12,6 +12,7 @@ import os
 # monkey-patch the standard library BEFORE importing anything else (otherwise
 # locks created by other modules are not "greened"). Production (Render) sets
 # SOCKETIO_ASYNC_MODE as a real environment variable; local dev stays "threading".
+os.environ.setdefault("EVENTLET_NO_GREENDNS", "yes")  # native DNS; greendns can't reach some hosts
 ASYNC_MODE = os.environ.get("SOCKETIO_ASYNC_MODE", "threading")
 if ASYNC_MODE == "eventlet":
     import eventlet

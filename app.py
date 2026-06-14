@@ -18,6 +18,10 @@ import os
 # gunicorn worker class and monkey-patch BEFORE the backend and its dependencies
 # are imported. Defaults to eventlet; set SOCKETIO_ASYNC_MODE=gevent (with a gevent
 # worker) or =threading (with the gthread worker) to switch engines.
+# Use the system DNS resolver instead of eventlet's greendns, which can fail to
+# reach external HTTPS hosts (push services, Supabase Storage). Set before eventlet.
+os.environ.setdefault("EVENTLET_NO_GREENDNS", "yes")
+
 _async_mode = os.environ.setdefault("SOCKETIO_ASYNC_MODE", "eventlet")
 
 if _async_mode == "eventlet":
