@@ -118,6 +118,16 @@ class MessageRead(Base):
     last_read_message_id = mapped_column(Integer, nullable=False, default=0)
 
 
+class MessageReaction(Base):
+    __tablename__ = "message_reactions"
+    id = mapped_column(Integer, primary_key=True)
+    message_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    emoji = mapped_column(String(16), nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_reaction_user"),)
+
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -157,6 +167,7 @@ def public_message(m):
         "attachmentType": m.attachment_type,
         "attachmentName": m.attachment_name,
         "createdAt": _iso(m.created_at),
+        "reactions": [],
     }
 
 
@@ -392,7 +403,18 @@ def get_messages(conversation_id):
             select(Message).where(Message.conversation_id == conversation_id)
             .order_by(Message.id.asc()).limit(500)
         ).scalars().all()
-        return [public_message(m) for m in rows]
+        msgs = [public_message(m) for m in rows]
+        ids = [m["id"] for m in msgs]
+        if ids:
+            rx = s.execute(
+                select(MessageReaction).where(MessageReaction.message_id.in_(ids))
+            ).scalars().all()
+            bucket = {}
+            for r in rx:
+                bucket.setdefault(r.message_id, []).append({"emoji": r.emoji, "userId": r.user_id})
+            for m in msgs:
+                m["reactions"] = bucket.get(m["id"], [])
+        return msgs
 
 
 def get_last_message(conversation_id):
@@ -402,6 +424,47 @@ def get_last_message(conversation_id):
             .order_by(Message.id.desc()).limit(1)
         ).scalar_one_or_none()
         return public_message(m)
+
+
+def get_message_meta(message_id):
+    """Lightweight lookup for ownership / routing checks. Returns dict or None."""
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m:
+            return None
+        return {"id": m.id, "senderId": m.sender_id, "conversationId": m.conversation_id}
+
+
+def delete_message(message_id):
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if m:
+            s.delete(m)  # reactions cascade-delete via FK
+
+
+def toggle_reaction(message_id, user_id, emoji):
+    """One reaction per user per message: same emoji toggles off, a different one
+    replaces it. Returns the updated reaction list for the message."""
+    with session_scope() as s:
+        existing = s.execute(
+            select(MessageReaction).where(
+                MessageReaction.message_id == message_id,
+                MessageReaction.user_id == user_id,
+            )
+        ).scalar_one_or_none()
+        if existing:
+            if existing.emoji == emoji:
+                s.delete(existing)
+            else:
+                existing.emoji = emoji
+        else:
+            s.add(MessageReaction(message_id=message_id, user_id=user_id,
+                                  emoji=emoji, created_at=now_utc()))
+        s.flush()
+        rows = s.execute(
+            select(MessageReaction).where(MessageReaction.message_id == message_id)
+        ).scalars().all()
+        return [{"emoji": r.emoji, "userId": r.user_id} for r in rows]
 
 
 # ---------------------------------------------------------------------------

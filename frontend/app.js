@@ -120,11 +120,16 @@
     $('#auth-submit').textContent = mode === 'login' ? 'Log in' : 'Create account';
     showAuthError('');
   }
-  function showAuthError(msg) {
+  function showAuthMsg(msg, type = 'error') {
     const box = $('#auth-error');
-    box.textContent = msg;
-    box.classList.toggle('show', !!msg);
+    box.classList.remove('show', 'error', 'success');
+    box.textContent = msg || '';
+    if (!msg) return;
+    box.classList.add(type);
+    void box.offsetWidth; // restart the entrance animation
+    box.classList.add('show');
   }
+  function showAuthError(msg) { showAuthMsg(msg, 'error'); }
 
   $$('.auth-tab').forEach((b) => b.addEventListener('click', () => setAuthMode(b.dataset.mode)));
   $$('[data-switch]').forEach((a) =>
@@ -153,6 +158,8 @@
       state.token = data.token;
       localStorage.setItem('pulse_token', data.token);
       state.me = data.user;
+      showAuthMsg(mode === 'register' ? 'Account created 🎉' : 'Welcome back 🎉', 'success');
+      await new Promise((r) => setTimeout(r, 420));
       await enterApp();
     } catch (err) {
       showAuthError(err.message);
@@ -215,6 +222,8 @@
     socket.on('presence', onPresence);
     socket.on('typing', onTyping);
     socket.on('message:read', onMessageRead);
+    socket.on('message:reaction', onMessageReaction);
+    socket.on('message:deleted', onMessageDeleted);
   }
 
   // ============================================================
@@ -298,7 +307,7 @@
         ${avatarHtml(f, { dot: !!f.online })}
         <div class="row-main">
           <div class="row-name">${escapeHtml(f.displayName)}</div>
-          <div class="row-sub">${f.online ? '🟢 Active now' : 'Offline'} · @${escapeHtml(f.username)}</div>
+          <div class="row-sub">${f.online ? 'Active now' : 'Offline'} · @${escapeHtml(f.username)}</div>
         </div>
       </div>`
       )
@@ -582,7 +591,7 @@
       const peer = state.current.peer;
       const avatar = avatarHtml(out ? state.me : peer, { cls: 'm-avatar' });
       html += `
-        <div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'}">
+        <div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'}" data-mid="${m.id}">
           ${avatar}
           ${renderBubble(m)}
         </div>`;
@@ -622,30 +631,39 @@
     const out = m.senderId === state.me.id;
     const grouped = !!prev && prevD === d && prev.senderId === m.senderId;
     const avatar = avatarHtml(out ? state.me : state.current.peer, { cls: 'm-avatar' });
-    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new">${avatar}${renderBubble(m)}</div>`;
+    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new" data-mid="${m.id}">${avatar}${renderBubble(m)}</div>`;
     box.insertAdjacentHTML('beforeend', html);
     updateSeenRow();
     box.scrollTop = box.scrollHeight;
   }
 
+  function reactionsHtml(m) {
+    const rx = m.reactions || [];
+    if (!rx.length) return '';
+    const counts = {};
+    rx.forEach((r) => { counts[r.emoji] = (counts[r.emoji] || 0) + 1; });
+    const emojis = Object.keys(counts).join('');
+    const mine = rx.some((r) => r.userId === state.me.id);
+    return `<div class="reactions ${mine ? 'mine' : ''}">${emojis}${rx.length > 1 ? `<span class="rc">${rx.length}</span>` : ''}</div>`;
+  }
+
   function renderBubble(m) {
     const t = `<span class="m-time">${fmtTime(m.createdAt)}</span>`;
+    const rx = reactionsHtml(m);
+    let inner;
     if (m.attachmentType === 'image') {
       const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
-      return `<div><div class="bubble media"><img src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="image" alt="image" loading="lazy">${cap}</div>${t}</div>`;
-    }
-    if (m.attachmentType === 'video') {
+      inner = `<div class="bubble media"><img src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="image" alt="image" loading="lazy">${cap}</div>`;
+    } else if (m.attachmentType === 'video') {
       const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
-      return `<div><div class="bubble media"><video src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="video" controls preload="metadata"></video>${cap}</div>${t}</div>`;
-    }
-    if (m.attachmentType === 'file') {
+      inner = `<div class="bubble media"><video src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="video" controls preload="metadata"></video>${cap}</div>`;
+    } else if (m.attachmentType === 'file') {
       const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
-      return `<div><div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener">
-        <span class="file-ico">📎</span>
-        <span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span>
-      </a>${cap}</div>${t}</div>`;
+      inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
+    } else {
+      inner = `<div class="bubble">${escapeHtml(m.body)}</div>`;
     }
-    return `<div><div class="bubble">${escapeHtml(m.body)}</div>${t}</div>`;
+    return `<div class="bwrap">${inner}${rx}${t}</div>`;
   }
 
   // ---------- back button (mobile) ----------
@@ -948,6 +966,114 @@
   }
 
   // ============================================================
+  // MESSAGE ACTIONS (react · unsend · copy) — long-press / right-click
+  // ============================================================
+  const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+  const messagesEl = $('#messages');
+  let pressTimer = null;
+
+  function pressStart(e) {
+    const msgEl = e.target.closest('.msg[data-mid]');
+    if (!msgEl) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => { pressTimer = null; openMsgMenu(msgEl); }, 480);
+  }
+  function pressEnd() { clearTimeout(pressTimer); pressTimer = null; }
+  messagesEl.addEventListener('touchstart', pressStart, { passive: true });
+  messagesEl.addEventListener('touchend', pressEnd);
+  messagesEl.addEventListener('touchmove', pressEnd, { passive: true });
+  messagesEl.addEventListener('contextmenu', (e) => {
+    const msgEl = e.target.closest('.msg[data-mid]');
+    if (msgEl) { e.preventDefault(); pressEnd(); openMsgMenu(msgEl); }
+  });
+
+  function openMsgMenu(msgEl) {
+    const mid = Number(msgEl.dataset.mid);
+    const m = state.messages.find((x) => x.id === mid);
+    if (!m) return;
+    const mine = m.senderId === state.me.id;
+    const myReact = (m.reactions || []).find((r) => r.userId === state.me.id);
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="mm-reacts">
+          ${REACTIONS.map((em) => `<button class="mm-react ${myReact && myReact.emoji === em ? 'on' : ''}" data-react="${em}">${em}</button>`).join('')}
+        </div>
+        <div class="mm-actions">
+          ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
+          ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const openedAt = Date.now();
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => {
+      const react = e.target.closest('[data-react]');
+      if (react) { reactToMessage(mid, react.dataset.react); return close(); }
+      if (e.target.closest('[data-unsend]')) { unsendMessage(mid); return close(); }
+      if (e.target.closest('[data-copy]')) {
+        try { navigator.clipboard.writeText(m.body || ''); toast('📋', 'Copied', 'Message copied'); } catch (_) {}
+        return close();
+      }
+      if (e.target.closest('[data-cancel]')) return close();
+      // backdrop tap — ignore the trailing tap that opened the sheet
+      if (e.target === overlay && Date.now() - openedAt > 220) close();
+    });
+  }
+
+  function reactToMessage(mid, emoji) {
+    if (!state.socket) return;
+    state.socket.emit('message:react', { messageId: mid, emoji }, (resp) => {
+      if (resp && resp.error) toast('⚠️', 'Could not react', resp.error);
+    });
+  }
+  function unsendMessage(mid) {
+    if (!state.socket) return;
+    state.socket.emit('message:delete', { messageId: mid }, (resp) => {
+      if (resp && resp.error) toast('⚠️', 'Could not unsend', resp.error);
+    });
+  }
+
+  function onMessageReaction(payload) {
+    const m = state.messages.find((x) => x.id === payload.messageId);
+    if (m && state.current && state.current.conversationId === payload.conversationId) {
+      m.reactions = payload.reactions || [];
+      updateMessageReactions(payload.messageId);
+    }
+  }
+  function updateMessageReactions(messageId) {
+    const m = state.messages.find((x) => x.id === messageId);
+    const wrap = messagesEl.querySelector(`.msg[data-mid="${messageId}"] .bwrap`);
+    if (!m || !wrap) return;
+    const old = wrap.querySelector('.reactions');
+    if (old) old.remove();
+    const html = reactionsHtml(m);
+    if (!html) return;
+    const time = wrap.querySelector('.m-time');
+    if (time) time.insertAdjacentHTML('beforebegin', html);
+    else wrap.insertAdjacentHTML('beforeend', html);
+  }
+  function onMessageDeleted(payload) {
+    if (state.current && state.current.conversationId === payload.conversationId) {
+      const i = state.messages.findIndex((x) => x.id === payload.messageId);
+      if (i !== -1) state.messages.splice(i, 1);
+      const el = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"]`);
+      if (el) el.remove();
+      if (!state.messages.length) renderMessages();
+      else updateSeenRow();
+    }
+    const conv = state.conversations.get(payload.conversationId);
+    if (conv && conv.lastMessage && conv.lastMessage.id === payload.messageId &&
+        state.current && state.current.conversationId === payload.conversationId) {
+      conv.lastMessage = state.messages.length ? state.messages[state.messages.length - 1] : conv.lastMessage;
+      renderChats();
+    }
+  }
+
+  // ============================================================
   // TOASTS
   // ============================================================
   function toast(icon, title, body, onClick) {
@@ -1004,14 +1130,23 @@
   // ============================================================
   async function boot() {
     setAuthMode('login');
+    // Wake the backend early (Render free tier sleeps) so login feels instant.
+    try { fetch(API_BASE + '/api/health', { cache: 'no-store' }).catch(() => {}); } catch (e) {}
     if (!state.token) return; // show auth screen
-    try {
-      const { user } = await api('/api/me');
-      state.me = user;
-      await enterApp();
-    } catch {
-      logout();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const { user } = await api('/api/me');
+        state.me = user;
+        await enterApp();
+        return;
+      } catch (err) {
+        // Only sign out if the token is genuinely invalid — never on a network
+        // or cold-start error, so the user stays logged in across restarts.
+        if (/not authenticated/i.test(String((err && err.message) || ''))) { logout(); return; }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
+    showAuthMsg('Server is waking up — please try again.', 'error');
   }
   boot();
 })();

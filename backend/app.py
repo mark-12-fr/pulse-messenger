@@ -88,7 +88,7 @@ def sign_token(user):
     payload = {
         "id": user["id"],
         "username": user["username"],
-        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "exp": datetime.now(timezone.utc) + timedelta(days=365),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
@@ -460,6 +460,52 @@ def on_message_read(payload):
     partner_id = db.conversation_partner_id(conv, uid)
     emit_to_user(partner_id, "message:read",
                  {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})
+
+
+ALLOWED_REACTIONS = {"👍", "❤️", "😂", "😮", "😢", "😡"}
+
+
+@socketio.on("message:react")
+def on_message_react(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    message_id = int(payload.get("messageId") or 0)
+    emoji = str(payload.get("emoji") or "")
+    if not message_id or emoji not in ALLOWED_REACTIONS:
+        return {"error": "Invalid reaction."}
+    meta = db.get_message_meta(message_id)
+    if not meta:
+        return {"error": "Message not found."}
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    if not db.is_conversation_member(conv, uid):
+        return {"error": "Not allowed."}
+    reactions = db.toggle_reaction(message_id, uid, emoji)
+    data = {"messageId": message_id, "conversationId": meta["conversationId"], "reactions": reactions}
+    emit_to_user(uid, "message:reaction", data)
+    emit_to_user(db.conversation_partner_id(conv, uid), "message:reaction", data)
+    return {"ok": True, "reactions": reactions}
+
+
+@socketio.on("message:delete")
+def on_message_delete(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    message_id = int(payload.get("messageId") or 0)
+    meta = db.get_message_meta(message_id)
+    if not meta:
+        return {"error": "Message not found."}
+    if meta["senderId"] != uid:
+        return {"error": "You can only unsend your own messages."}
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    db.delete_message(message_id)
+    data = {"messageId": message_id, "conversationId": meta["conversationId"]}
+    emit_to_user(uid, "message:deleted", data)
+    emit_to_user(db.conversation_partner_id(conv, uid), "message:deleted", data)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
