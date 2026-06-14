@@ -1322,6 +1322,140 @@
   })();
 
   // ============================================================
+  // SETTINGS · accent color · push notifications
+  // ============================================================
+  const ACCENTS = [
+    { id: 'blue', c1: '#0a7cff', c2: '#6c46ff' },
+    { id: 'violet', c1: '#7c3aed', c2: '#c026d3' },
+    { id: 'green', c1: '#10b981', c2: '#0ea5e9' },
+    { id: 'pink', c1: '#ff4f8b', c2: '#ff7a45' },
+    { id: 'orange', c1: '#ff8a3d', c2: '#ff5e3a' },
+  ];
+  function applyAccent(id) {
+    const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
+    const s = document.documentElement.style;
+    s.setProperty('--accent', a.c1);
+    s.setProperty('--accent-2', a.c2);
+    s.setProperty('--accent-grad', `linear-gradient(135deg, ${a.c1} 0%, ${a.c2} 100%)`);
+    try { localStorage.setItem('tea_accent', id); } catch (e) {}
+  }
+  applyAccent(localStorage.getItem('tea_accent') || 'blue');
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  function urlB64ToUint8Array(b64) {
+    const padding = '='.repeat((4 - (b64.length % 4)) % 4);
+    const base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const arr = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+  async function pushState() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      return sub ? 'on' : 'off';
+    } catch (e) { return 'off'; }
+  }
+  async function enablePush() {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return false;
+      const { key } = await api('/api/push/key');
+      if (!key) { toast('⚠️', 'Unavailable', 'Notifications not ready on the server yet'); return false; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(key),
+      });
+      const j = sub.toJSON();
+      await api('/api/push/subscribe', { method: 'POST', body: { endpoint: j.endpoint, keys: j.keys } });
+      toast('🔔', 'Notifications on', "You'll be alerted of new messages");
+      return true;
+    } catch (e) {
+      toast('⚠️', 'Could not enable', e.message || 'Try installing Tea to your home screen first');
+      return false;
+    }
+  }
+  async function disablePush() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => {});
+        await sub.unsubscribe();
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+
+  function openSettings() {
+    const curTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    const curAccent = localStorage.getItem('tea_accent') || 'blue';
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu settings-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet settings-sheet">
+        <div class="settings-title">Settings</div>
+        <div class="set-section">
+          <div class="set-label">Appearance</div>
+          <div class="seg">
+            <button data-theme-set="light" class="${curTheme === 'light' ? 'on' : ''}">☀️ Light</button>
+            <button data-theme-set="dark" class="${curTheme === 'dark' ? 'on' : ''}">🌙 Dark</button>
+          </div>
+        </div>
+        <div class="set-section">
+          <div class="set-label">Accent color</div>
+          <div class="swatches">
+            ${ACCENTS.map((a) => `<button class="swatch ${curAccent === a.id ? 'on' : ''}" data-accent="${a.id}" style="background:linear-gradient(135deg,${a.c1},${a.c2})" aria-label="${a.id}"></button>`).join('')}
+          </div>
+        </div>
+        <div class="set-section set-list">
+          <button class="set-row" data-notif="1"><span>🔔 Notifications</span><span class="set-state" id="set-notif">…</span></button>
+          <button class="set-row" data-editprofile="1"><span>👤 Edit profile</span><span class="set-state">›</span></button>
+          <button class="set-row danger" data-logout="1"><span>🚪 Log out</span></button>
+        </div>
+        <button class="mm-act" data-cancel="1">Close</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+
+    const notifEl = overlay.querySelector('#set-notif');
+    const renderNotif = async () => {
+      const st = await pushState();
+      notifEl.textContent = st === 'on' ? 'On' : st === 'denied' ? 'Blocked' : st === 'unsupported' ? 'N/A' : 'Off';
+    };
+    renderNotif();
+
+    overlay.addEventListener('click', async (e) => {
+      const ts = e.target.closest('[data-theme-set]');
+      if (ts) { applyTheme(ts.dataset.themeSet); overlay.querySelectorAll('[data-theme-set]').forEach((b) => b.classList.toggle('on', b === ts)); return; }
+      const sw = e.target.closest('[data-accent]');
+      if (sw) { applyAccent(sw.dataset.accent); overlay.querySelectorAll('.swatch').forEach((b) => b.classList.toggle('on', b === sw)); return; }
+      if (e.target.closest('[data-notif]')) {
+        const st = await pushState();
+        if (st === 'on') await disablePush();
+        else if (st === 'off') await enablePush();
+        else if (st === 'denied') toast('🔕', 'Blocked', 'Enable notifications in your browser settings');
+        else toast('ℹ️', 'Not supported', 'Add Tea to your home screen first (iPhone: Share → Add to Home Screen)');
+        renderNotif();
+        return;
+      }
+      if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }
+      if (e.target.closest('[data-logout]')) { close(); logout(); return; }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  // ============================================================
   // BOOT
   // ============================================================
   async function boot() {

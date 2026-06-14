@@ -770,3 +770,24 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .reply-bar-main { flex: 1; min-width: 0; }
 .reply-bar-label { font-size: 12px; font-weight: 700; color: var(--accent); }
 .reply-bar-text { font-size: 13px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ===== no text-highlight / callout on long-press (react) ===== */
+.messages, .msg-menu, .modal-card, .row, .sidebar-head { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+
+/* ===== settings sheet ===== */
+.settings-sheet { gap: 0; background: var(--elev); border: 1px solid var(--line); border-radius: 22px; padding: 6px; box-shadow: var(--shadow); }
+.settings-title { font-size: 18px; font-weight: 800; padding: 12px 14px 4px; }
+.set-section { padding: 10px 10px; }
+.set-section.set-list { padding: 6px; }
+.set-label { font-size: 11.5px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 9px; }
+.seg { display: flex; gap: 8px; }
+.seg button { flex: 1; border: 1.5px solid var(--line); background: transparent; color: var(--text); padding: 11px; border-radius: 13px; font-weight: 650; font-size: 14px; transition: border-color .15s var(--ease), background .15s var(--ease), color .15s var(--ease); }
+.seg button.on { border-color: var(--accent); background: var(--active); color: var(--accent); }
+.swatches { display: flex; gap: 12px; }
+.swatch { width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid transparent; box-shadow: var(--shadow-soft); transition: transform .12s var(--ease), border-color .15s var(--ease); }
+.swatch.on { border-color: var(--text); transform: scale(1.1); }
+.set-row { display: flex; align-items: center; justify-content: space-between; width: 100%; border: none; background: transparent; color: var(--text); padding: 14px 12px; font-size: 15px; font-weight: 600; border-radius: 13px; transition: background .15s var(--ease); }
+.set-row:active { background: var(--hover); }
+.set-row.danger { color: var(--danger); }
+.set-state { color: var(--text-faint); font-weight: 700; font-size: 13.5px; }

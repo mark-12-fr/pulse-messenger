@@ -51,6 +51,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import db
 import storage
+import push
 
 # ---------------------------------------------------------------------------
 # Config
@@ -382,6 +383,38 @@ def serve_upload(filename):
 
 
 # ---------------------------------------------------------------------------
+# Push notifications (content-free: "X sent you a message")
+# ---------------------------------------------------------------------------
+@app.get("/api/push/key")
+def push_key():
+    return jsonify(key=push.public_key())
+
+
+@app.post("/api/push/subscribe")
+@auth_required
+def push_subscribe():
+    data = request.get_json(silent=True) or {}
+    endpoint = str(data.get("endpoint") or "")
+    keys = data.get("keys") or {}
+    p256dh = str(keys.get("p256dh") or "")
+    auth = str(keys.get("auth") or "")
+    if not endpoint or not p256dh or not auth:
+        return jsonify(error="Invalid subscription."), 400
+    db.save_push_subscription(g.user["id"], endpoint, p256dh, auth)
+    return jsonify(ok=True)
+
+
+@app.post("/api/push/unsubscribe")
+@auth_required
+def push_unsubscribe():
+    data = request.get_json(silent=True) or {}
+    endpoint = str(data.get("endpoint") or "")
+    if endpoint:
+        db.delete_push_subscription(endpoint)
+    return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------------------
 # Socket.IO
 # ---------------------------------------------------------------------------
 @socketio.on("connect")
@@ -456,6 +489,11 @@ def on_message_send(payload):
 
     emit_to_user(uid, "message:new", envelope)
     emit_to_user(to_user_id, "message:new", envelope)
+    # If the recipient isn't actively connected, send a content-free push so they
+    # see "X sent you a message" in their notification bar even with the app closed.
+    if not is_online(to_user_id):
+        socketio.start_background_task(push.send_to_user, to_user_id,
+                                       sender["displayName"], "Sent you a message")
     return {"ok": True, "message": msg}
 
 

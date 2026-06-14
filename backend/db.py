@@ -130,6 +130,22 @@ class MessageReaction(Base):
     __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_reaction_user"),)
 
 
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    endpoint = mapped_column(Text, nullable=False, unique=True)
+    p256dh = mapped_column(Text, nullable=False)
+    auth = mapped_column(Text, nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class AppConfig(Base):
+    __tablename__ = "app_config"
+    key = mapped_column(String(64), primary_key=True)
+    value = mapped_column(Text, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -609,3 +625,52 @@ def list_conversations(me_id):
         })
     result.sort(key=lambda x: (x["lastMessage"]["createdAt"] or ""), reverse=True)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Push subscriptions & app config
+# ---------------------------------------------------------------------------
+def get_config(key):
+    with session_scope() as s:
+        c = s.get(AppConfig, key)
+        return c.value if c else None
+
+
+def set_config(key, value):
+    with session_scope() as s:
+        c = s.get(AppConfig, key)
+        if c:
+            c.value = value
+        else:
+            s.add(AppConfig(key=key, value=value))
+
+
+def save_push_subscription(user_id, endpoint, p256dh, auth):
+    with session_scope() as s:
+        existing = s.execute(
+            select(PushSubscription).where(PushSubscription.endpoint == endpoint)
+        ).scalar_one_or_none()
+        if existing:
+            existing.user_id = user_id
+            existing.p256dh = p256dh
+            existing.auth = auth
+        else:
+            s.add(PushSubscription(user_id=user_id, endpoint=endpoint,
+                                   p256dh=p256dh, auth=auth, created_at=now_utc()))
+
+
+def delete_push_subscription(endpoint):
+    with session_scope() as s:
+        sub = s.execute(
+            select(PushSubscription).where(PushSubscription.endpoint == endpoint)
+        ).scalar_one_or_none()
+        if sub:
+            s.delete(sub)
+
+
+def get_push_subscriptions(user_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(PushSubscription).where(PushSubscription.user_id == user_id)
+        ).scalars().all()
+        return [{"endpoint": r.endpoint, "p256dh": r.p256dh, "auth": r.auth} for r in rows]
