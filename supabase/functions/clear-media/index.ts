@@ -1,13 +1,13 @@
-// clear-media — deletes media files older than the start of "today" (Manila/UTC+8)
-// from the `media` storage bucket. Invoked daily by a pg_cron job. Uses the
+// clear-media — deletes media files older than 5 hours from the `media` storage
+// bucket (privacy auto-clear). Invoked hourly by a pg_cron job. Uses the
 // service-role key that Supabase injects automatically, so no secrets are hardcoded.
 //
-// This is already deployed to your Supabase project. To redeploy after editing:
+// To redeploy after editing:
 //   supabase functions deploy clear-media
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const BUCKET = "media";
-const TZ_OFFSET_HOURS = 8; // Asia/Manila
+const RETENTION_HOURS = 5;
 
 Deno.serve(async (_req: Request) => {
   try {
@@ -15,12 +15,8 @@ Deno.serve(async (_req: Request) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(url, serviceKey);
 
-    // Start of today in Manila, expressed as a UTC millisecond timestamp.
-    const manila = new Date(Date.now() + TZ_OFFSET_HOURS * 3600_000);
-    const manilaMidnightUtcMs = Date.UTC(
-      manila.getUTCFullYear(), manila.getUTCMonth(), manila.getUTCDate(), 0, 0, 0,
-    );
-    const boundaryMs = manilaMidnightUtcMs - TZ_OFFSET_HOURS * 3600_000;
+    // Anything created more than RETENTION_HOURS ago is removed.
+    const boundaryMs = Date.now() - RETENTION_HOURS * 3600_000;
 
     const toDelete: string[] = [];
     let offset = 0;
