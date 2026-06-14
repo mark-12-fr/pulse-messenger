@@ -108,6 +108,7 @@ class Message(Base):
     attachment_type = mapped_column(String(16), nullable=True)   # image | video | file
     attachment_name = mapped_column(Text, nullable=True)
     unsent = mapped_column(Boolean, nullable=False, default=False)
+    edited = mapped_column(Boolean, nullable=False, default=False)
     reply_to_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
@@ -185,6 +186,7 @@ def public_message(m):
         "attachmentType": m.attachment_type,
         "attachmentName": m.attachment_name,
         "unsent": bool(m.unsent),
+        "edited": bool(m.edited),
         "createdAt": _iso(m.created_at),
         "reactions": [],
         "replyTo": None,
@@ -531,6 +533,15 @@ def unsend_message(message_id):
             select(MessageReaction).where(MessageReaction.message_id == message_id)
         ).scalars().all():
             s.delete(r)
+
+
+def edit_message(message_id, new_body):
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m or m.unsent:
+            return
+        m.body = new_body
+        m.edited = True
 
 
 def delete_conversation_messages(conversation_id):

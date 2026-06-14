@@ -85,6 +85,7 @@
     messages: [],
     attachment: null,
     replyTo: null,
+    editing: null,
     partnerLastRead: 0,
     peerTypingTimer: null,
     sendTypingTimer: null,
@@ -225,6 +226,7 @@
     socket.on('message:read', onMessageRead);
     socket.on('message:reaction', onMessageReaction);
     socket.on('message:unsent', onMessageUnsent);
+    socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
     socket.on('friend:removed', onFriendRemoved);
   }
@@ -528,6 +530,7 @@
     clearTimeout(state.peerTypingTimer);
     clearAttachment();
     cancelReply();
+    cancelEdit();
     msgInput.value = '';
     msgInput.style.height = 'auto';
     refreshSendState();
@@ -663,7 +666,7 @@
       const name = m.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || 'They');
       return `<div class="bwrap"><div class="bubble unsent">🚫 ${escapeHtml(name)} unsent a message</div></div>`;
     }
-    const t = `<span class="m-time">${fmtTime(m.createdAt)}</span>`;
+    const t = `<span class="m-time">${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}</span>`;
     const rx = reactionsHtml(m);
     let inner;
     if (m.attachmentType === 'image') {
@@ -743,6 +746,16 @@
   function sendMessage() {
     if (!state.current) return;
     const body = msgInput.value.trim();
+    if (state.editing) {
+      if (!body) return;
+      const mid = state.editing;
+      state.socket.emit('message:edit', { messageId: mid, body }, (resp) => {
+        if (resp && resp.error) toast('⚠️', 'Not edited', resp.error);
+      });
+      cancelEdit();
+      stopTyping();
+      return;
+    }
     if (!body && !state.attachment) return;
 
     state.socket.emit(
@@ -1047,9 +1060,29 @@
   });
 
   function startReply(m) {
+    state.editing = null;
     state.replyTo = { id: m.id, senderId: m.senderId, preview: msgPreviewShort(m) };
     showReplyBar();
     msgInput.focus();
+  }
+  function startEdit(m) {
+    state.replyTo = null;
+    state.editing = m.id;
+    $('#reply-bar-label').textContent = 'Editing message';
+    $('#reply-bar-text').textContent = msgPreviewShort(m);
+    $('#reply-bar').classList.remove('hidden');
+    msgInput.value = m.body || '';
+    msgInput.style.height = 'auto';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+    refreshSendState();
+    msgInput.focus();
+  }
+  function cancelEdit() {
+    state.editing = null;
+    $('#reply-bar').classList.add('hidden');
+    msgInput.value = '';
+    msgInput.style.height = 'auto';
+    refreshSendState();
   }
   function msgPreviewShort(m) {
     if (m.unsent) return 'unsent a message';
@@ -1073,7 +1106,7 @@
     if (rb) rb.classList.add('hidden');
   }
   const replyCancelBtn = $('#reply-cancel');
-  if (replyCancelBtn) replyCancelBtn.addEventListener('click', cancelReply);
+  if (replyCancelBtn) replyCancelBtn.addEventListener('click', () => { if (state.editing) cancelEdit(); else cancelReply(); });
 
   function openMsgMenu(msgEl) {
     const mid = Number(msgEl.dataset.mid);
@@ -1091,6 +1124,7 @@
         </div>
         <div class="mm-actions">
           <button class="mm-act" data-reply="1">Reply</button>
+          ${mine && m.body ? `<button class="mm-act" data-edit="1">Edit</button>` : ''}
           ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
           ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
           <button class="mm-act" data-cancel="1">Cancel</button>
@@ -1105,6 +1139,7 @@
       if (react) { reactToMessage(mid, react.dataset.react); return close(); }
       if (e.target.closest('[data-emoji-more]')) { close(); openEmojiPicker(mid); return; }
       if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
+      if (e.target.closest('[data-edit]')) { startEdit(m); return close(); }
       if (e.target.closest('[data-unsend]')) { unsendMessage(mid); return close(); }
       if (e.target.closest('[data-copy]')) {
         try { navigator.clipboard.writeText(m.body || ''); toast('📋', 'Copied', 'Message copied'); } catch (_) {}
@@ -1171,6 +1206,23 @@
     if (time) time.insertAdjacentHTML('beforebegin', html);
     else wrap.insertAdjacentHTML('beforeend', html);
   }
+  function onMessageEdited(payload) {
+    const m = state.messages.find((x) => x.id === payload.messageId);
+    if (m) {
+      m.body = payload.body;
+      m.edited = true;
+      if (state.current && state.current.conversationId === payload.conversationId) {
+        const bwrap = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"] .bwrap`);
+        if (bwrap) bwrap.outerHTML = renderBubble(m);
+      }
+    }
+    const conv = state.conversations.get(payload.conversationId);
+    if (conv && conv.lastMessage && conv.lastMessage.id === payload.messageId) {
+      conv.lastMessage = m || conv.lastMessage;
+      renderChats();
+    }
+  }
+
   function onMessageUnsent(payload) {
     const m = state.messages.find((x) => x.id === payload.messageId);
     if (m) {
@@ -1445,6 +1497,7 @@
         </div>
         <div class="set-section set-list">
           <button class="set-row" data-notif="1"><span>🔔 Notifications</span><span class="set-state" id="set-notif">…</span></button>
+          <button class="set-row" data-notif-test="1"><span>📨 Send test notification</span><span class="set-state">›</span></button>
           <button class="set-row" data-editprofile="1"><span>👤 Edit profile</span><span class="set-state">›</span></button>
           <button class="set-row danger" data-logout="1"><span>🚪 Log out</span></button>
         </div>
@@ -1473,6 +1526,15 @@
         else if (st === 'denied') toast('🔕', 'Blocked', 'Enable notifications in your browser settings');
         else toast('ℹ️', 'Not supported', 'Add Tea to your home screen first (iPhone: Share → Add to Home Screen)');
         renderNotif();
+        return;
+      }
+      if (e.target.closest('[data-notif-test]')) {
+        try {
+          const r = await api('/api/push/test', { method: 'POST' });
+          if (r.sent > 0) toast('📨', 'Sent', 'Check your notification bar / lock screen');
+          else if (r.subs === 0) toast('🔕', 'No devices', 'Turn Notifications on first');
+          else toast('⚠️', 'Not delivered', r.error || 'Unknown error');
+        } catch (e2) { toast('⚠️', 'Error', e2.message); }
         return;
       }
       if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }

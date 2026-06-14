@@ -69,19 +69,24 @@ def public_key():
 
 
 def send_to_user(user_id, title, body):
-    """Send a content-free push ('X sent you a message') to all of a user's devices."""
+    """Send a content-free push to all of a user's devices. Returns diagnostics."""
+    result = {"available": _AVAILABLE, "subs": 0, "sent": 0, "failed": 0, "error": None}
     if not _AVAILABLE:
-        return
+        result["error"] = "pywebpush not installed on the server"
+        return result
     try:
         priv_pem, _ = _ensure_keys()
         vapid = Vapid02.from_pem(priv_pem.encode("ascii"))
-    except Exception:
-        return
+    except Exception as e:
+        result["error"] = "vapid: " + str(e)[:200]
+        return result
     payload = json.dumps({"title": title, "body": body})
     try:
         subs = db.get_push_subscriptions(user_id)
-    except Exception:
-        return
+    except Exception as e:
+        result["error"] = "db: " + str(e)[:200]
+        return result
+    result["subs"] = len(subs)
     for sub in subs:
         info = {"endpoint": sub["endpoint"], "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]}}
         try:
@@ -92,9 +97,14 @@ def send_to_user(user_id, title, body):
                 vapid_claims={"sub": _VAPID_SUB},
                 timeout=10,
             )
+            result["sent"] += 1
         except WebPushException as e:
+            result["failed"] += 1
             status = getattr(getattr(e, "response", None), "status_code", None)
+            result["error"] = "webpush %s: %s" % (status, str(e)[:200])
             if status in (404, 410):
                 db.delete_push_subscription(sub["endpoint"])
-        except Exception:
-            pass
+        except Exception as e:
+            result["failed"] += 1
+            result["error"] = "send: " + str(e)[:200]
+    return result

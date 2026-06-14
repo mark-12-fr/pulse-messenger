@@ -414,6 +414,12 @@ def push_unsubscribe():
     return jsonify(ok=True)
 
 
+@app.post("/api/push/test")
+@auth_required
+def push_test():
+    return jsonify(push.send_to_user(g.user["id"], "Tea 🍵", "Test notification — it works!"))
+
+
 # ---------------------------------------------------------------------------
 # Socket.IO
 # ---------------------------------------------------------------------------
@@ -560,6 +566,29 @@ def on_message_react(payload):
     emit_to_user(uid, "message:reaction", data)
     emit_to_user(db.conversation_partner_id(conv, uid), "message:reaction", data)
     return {"ok": True, "reactions": reactions}
+
+
+@socketio.on("message:edit")
+def on_message_edit(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    message_id = int(payload.get("messageId") or 0)
+    body = str(payload.get("body") or "").strip()[:5000]
+    if not message_id or not body:
+        return {"error": "Empty message."}
+    meta = db.get_message_meta(message_id)
+    if not meta:
+        return {"error": "Message not found."}
+    if meta["senderId"] != uid:
+        return {"error": "You can only edit your own messages."}
+    db.edit_message(message_id, body)
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    data = {"messageId": message_id, "conversationId": meta["conversationId"], "body": body, "edited": True}
+    emit_to_user(uid, "message:edited", data)
+    emit_to_user(db.conversation_partner_id(conv, uid), "message:edited", data)
+    return {"ok": True}
 
 
 @socketio.on("message:delete")
