@@ -106,5 +106,10 @@ def send_to_user(user_id, title, body):
                 db.delete_push_subscription(sub["endpoint"])
         except Exception as e:
             result["failed"] += 1
-            result["error"] = "send: " + str(e)[:200]
+            result["error"] = "send: " + str(e)[:300]
+    try:
+        import time as _t
+        db.set_config("last_push_result", json.dumps({**result, "at": int(_t.time())}))
+    except Exception:
+        pass
     return result
