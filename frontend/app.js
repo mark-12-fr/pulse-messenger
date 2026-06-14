@@ -589,13 +589,42 @@
       prevSender = m.senderId;
     });
 
-    // "Seen" indicator under last outgoing message
+    box.innerHTML = html;
+    updateSeenRow();
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // Show a plain "Seen" label under the last outgoing message (no avatar).
+  function updateSeenRow() {
+    const box = $('#messages');
+    const old = box.querySelector('.seen-row');
+    if (old) old.remove();
+    if (!state.messages.length) return;
     const last = state.messages[state.messages.length - 1];
     if (last && last.senderId === state.me.id && state.partnerLastRead >= last.id) {
-      html += `<div class="seen-row">Seen ${avatarHtml(state.current.peer, { cls: 'seen-avatar' })}</div>`;
+      box.insertAdjacentHTML('beforeend', `<div class="seen-row">Seen</div>`);
     }
+  }
 
-    box.innerHTML = html;
+  // Append a single new message (with entrance animation) without re-rendering all.
+  function appendMessage(m) {
+    const box = $('#messages');
+    const note = box.querySelector('.empty-note');
+    if (note) note.remove();
+    const seen = box.querySelector('.seen-row');
+    if (seen) seen.remove();
+    const idx = state.messages.indexOf(m);
+    const prev = idx > 0 ? state.messages[idx - 1] : null;
+    const d = dayLabel(m.createdAt);
+    const prevD = prev ? dayLabel(prev.createdAt) : null;
+    let html = '';
+    if (d !== prevD) html += `<div class="day-sep">${d}</div>`;
+    const out = m.senderId === state.me.id;
+    const grouped = !!prev && prevD === d && prev.senderId === m.senderId;
+    const avatar = avatarHtml(out ? state.me : state.current.peer, { cls: 'm-avatar' });
+    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new">${avatar}${renderBubble(m)}</div>`;
+    box.insertAdjacentHTML('beforeend', html);
+    updateSeenRow();
     box.scrollTop = box.scrollHeight;
   }
 
@@ -712,9 +741,45 @@
     await uploadAttachment(file);
   });
 
+  // Resize + re-encode photos to JPEG before upload. This shrinks big iPhone
+  // photos (lighter storage) AND converts HEIC/HEIF so every device can view it.
+  function compressImage(file) {
+    return new Promise((resolve) => {
+      const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i.test(file.name || '');
+      const isGif = file.type === 'image/gif' || /\.gif$/i.test(file.name || '');
+      if (!isImage || isGif) return resolve(file);
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX = 1600;
+          let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          const scale = Math.min(1, MAX / Math.max(w, h));
+          w = Math.max(1, Math.round(w * scale));
+          h = Math.max(1, Math.round(h * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          canvas.toBlob((blob) => {
+            if (!blob) return resolve(file);
+            const isHeic = /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name || '');
+            // HEIC/HEIF: always use the JPEG. Others: keep it only if it's smaller.
+            if (!isHeic && blob.size >= file.size) return resolve(file);
+            const base = (file.name || 'photo').replace(/\.[^.]+$/, '');
+            resolve(new File([blob], base + '.jpg', { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.82);
+        } catch (e) { URL.revokeObjectURL(url); resolve(file); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+
   async function uploadAttachment(file) {
-    const isImg = file.type.startsWith('image/');
+    const isImg = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(file.name || '');
     const isVid = file.type.startsWith('video/');
+    if (isImg) { try { file = await compressImage(file); } catch (e) { /* keep original */ } }
     const localUrl = (isImg || isVid) ? URL.createObjectURL(file) : null;
     showAttachPreview({ name: file.name, size: file.size, localUrl, isImg, isVid, uploading: true });
 
@@ -790,7 +855,7 @@
 
     if (isOpen) {
       state.messages.push(msg);
-      renderMessages();
+      appendMessage(msg);
       conv.unread = 0;
       if (!isMine) {
         state.socket.emit('message:read', { conversationId: convId });
@@ -807,7 +872,7 @@
     if (state.current && state.current.conversationId === payload.conversationId) {
       if (payload.byUserId !== state.me.id) {
         state.partnerLastRead = Math.max(state.partnerLastRead, payload.lastReadMessageId);
-        renderMessages();
+        updateSeenRow();
       }
     }
   }
@@ -901,6 +966,38 @@
     $('#toasts').appendChild(el);
     setTimeout(() => el.remove(), 5000);
   }
+
+  // ============================================================
+  // THEME (light / dark)
+  // ============================================================
+  const THEME_KEY = 'tea_theme';
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    const m = document.getElementById('theme-color-dyn');
+    if (m) m.setAttribute('content', t === 'light' ? '#ffffff' : '#0a0a0f');
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  }
+  (function initTheme() {
+    // collapse the static theme-color metas into one that tracks the chosen theme
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.remove());
+    const meta = document.createElement('meta');
+    meta.id = 'theme-color-dyn';
+    meta.name = 'theme-color';
+    const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    meta.setAttribute('content', cur === 'light' ? '#ffffff' : '#0a0a0f');
+    document.head.appendChild(meta);
+
+    const btn = document.getElementById('theme-btn');
+    if (btn) btn.addEventListener('click', () => {
+      const c = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      applyTheme(c === 'dark' ? 'light' : 'dark');
+    });
+    try {
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+        if (!localStorage.getItem(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
+      });
+    } catch (e) {}
+  })();
 
   // ============================================================
   // BOOT
