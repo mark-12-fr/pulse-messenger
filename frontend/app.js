@@ -84,6 +84,7 @@
     current: null, // {conversationId, peer}
     messages: [],
     attachment: null,
+    replyTo: null,
     partnerLastRead: 0,
     peerTypingTimer: null,
     sendTypingTimer: null,
@@ -526,6 +527,7 @@
     $('#typing-row').classList.remove('show');
     clearTimeout(state.peerTypingTimer);
     clearAttachment();
+    cancelReply();
     msgInput.value = '';
     msgInput.style.height = 'auto';
     refreshSendState();
@@ -650,6 +652,12 @@
     return `<div class="reactions ${mine ? 'mine' : ''}">${emojis}${rx.length > 1 ? `<span class="rc">${rx.length}</span>` : ''}</div>`;
   }
 
+  function replyQuoteHtml(m) {
+    if (!m.replyTo) return '';
+    const who = m.replyTo.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || '');
+    return `<div class="reply-quote"><span class="rq-who">${escapeHtml(who)}</span> ${escapeHtml(m.replyTo.preview)}</div>`;
+  }
+
   function renderBubble(m) {
     if (m.unsent) {
       const name = m.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || 'They');
@@ -670,7 +678,7 @@
     } else {
       inner = `<div class="bubble">${escapeHtml(m.body)}</div>`;
     }
-    return `<div class="bwrap">${inner}${rx}${t}</div>`;
+    return `<div class="bwrap">${replyQuoteHtml(m)}${inner}${rx}${t}</div>`;
   }
 
   // ---------- back button (mobile) ----------
@@ -739,7 +747,12 @@
 
     state.socket.emit(
       'message:send',
-      { toUserId: state.current.peer.id, body, attachment: state.attachment },
+      {
+        toUserId: state.current.peer.id,
+        body,
+        attachment: state.attachment,
+        replyToId: state.replyTo ? state.replyTo.id : null,
+      },
       (resp) => {
         if (resp && resp.error) toast('⚠️', 'Not sent', resp.error);
       }
@@ -748,6 +761,7 @@
     msgInput.value = '';
     msgInput.style.height = 'auto';
     clearAttachment();
+    cancelReply();
     refreshSendState();
     stopTyping();
   }
@@ -979,21 +993,86 @@
   const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
   const messagesEl = $('#messages');
   let pressTimer = null;
+  let touchState = null;
 
-  function pressStart(e) {
+  function onTouchStart(e) {
     const msgEl = e.target.closest('.msg[data-mid]');
     if (!msgEl) return;
+    const t = e.touches[0];
+    touchState = { el: msgEl, startX: t.clientX, startY: t.clientY, swiping: false };
     clearTimeout(pressTimer);
-    pressTimer = setTimeout(() => { pressTimer = null; openMsgMenu(msgEl); }, 480);
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      if (touchState && !touchState.swiping) openMsgMenu(msgEl);
+    }, 480);
   }
-  function pressEnd() { clearTimeout(pressTimer); pressTimer = null; }
-  messagesEl.addEventListener('touchstart', pressStart, { passive: true });
-  messagesEl.addEventListener('touchend', pressEnd);
-  messagesEl.addEventListener('touchmove', pressEnd, { passive: true });
+  function onTouchMove(e) {
+    if (!touchState) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchState.startX;
+    const dy = t.clientY - touchState.startY;
+    if (!touchState.swiping && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) + 4) {
+      touchState.swiping = true;
+      clearTimeout(pressTimer); pressTimer = null;
+      touchState.el.classList.add('swiping');
+    }
+    if (touchState.swiping) {
+      const out = touchState.el.classList.contains('out');
+      const move = out ? Math.max(-90, Math.min(0, dx)) : Math.min(90, Math.max(0, dx));
+      touchState.el.style.transform = `translateX(${move}px)`;
+      touchState.el.classList.toggle('swipe-armed', Math.abs(move) > 52);
+    }
+  }
+  function onTouchEnd() {
+    clearTimeout(pressTimer); pressTimer = null;
+    if (!touchState) return;
+    const el = touchState.el;
+    const armed = el.classList.contains('swipe-armed');
+    el.classList.remove('swiping', 'swipe-armed');
+    el.style.transform = '';
+    if (armed) {
+      const m = state.messages.find((x) => x.id === Number(el.dataset.mid));
+      if (m && !m.unsent) startReply(m);
+    }
+    touchState = null;
+  }
+  messagesEl.addEventListener('touchstart', onTouchStart, { passive: true });
+  messagesEl.addEventListener('touchmove', onTouchMove, { passive: true });
+  messagesEl.addEventListener('touchend', onTouchEnd);
+  messagesEl.addEventListener('touchcancel', onTouchEnd);
   messagesEl.addEventListener('contextmenu', (e) => {
     const msgEl = e.target.closest('.msg[data-mid]');
-    if (msgEl) { e.preventDefault(); pressEnd(); openMsgMenu(msgEl); }
+    if (msgEl) { e.preventDefault(); openMsgMenu(msgEl); }
   });
+
+  function startReply(m) {
+    state.replyTo = { id: m.id, senderId: m.senderId, preview: msgPreviewShort(m) };
+    showReplyBar();
+    msgInput.focus();
+  }
+  function msgPreviewShort(m) {
+    if (m.unsent) return 'unsent a message';
+    if (m.attachmentType === 'image') return '📷 Photo';
+    if (m.attachmentType === 'video') return '🎥 Video';
+    if (m.attachmentType === 'file') return '📎 ' + (m.attachmentName || 'File');
+    return (m.body || '').slice(0, 90);
+  }
+  function showReplyBar() {
+    if (!state.replyTo) return;
+    const who = state.replyTo.senderId === state.me.id
+      ? 'yourself'
+      : ((state.current && state.current.peer && state.current.peer.displayName) || 'them');
+    $('#reply-bar-label').textContent = 'Replying to ' + who;
+    $('#reply-bar-text').textContent = state.replyTo.preview;
+    $('#reply-bar').classList.remove('hidden');
+  }
+  function cancelReply() {
+    state.replyTo = null;
+    const rb = $('#reply-bar');
+    if (rb) rb.classList.add('hidden');
+  }
+  const replyCancelBtn = $('#reply-cancel');
+  if (replyCancelBtn) replyCancelBtn.addEventListener('click', cancelReply);
 
   function openMsgMenu(msgEl) {
     const mid = Number(msgEl.dataset.mid);
@@ -1009,6 +1088,7 @@
           ${REACTIONS.map((em) => `<button class="mm-react ${myReact && myReact.emoji === em ? 'on' : ''}" data-react="${em}">${em}</button>`).join('')}
         </div>
         <div class="mm-actions">
+          <button class="mm-act" data-reply="1">Reply</button>
           ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
           ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
           <button class="mm-act" data-cancel="1">Cancel</button>
@@ -1021,6 +1101,7 @@
     overlay.addEventListener('click', (e) => {
       const react = e.target.closest('[data-react]');
       if (react) { reactToMessage(mid, react.dataset.react); return close(); }
+      if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
       if (e.target.closest('[data-unsend]')) { unsendMessage(mid); return close(); }
       if (e.target.closest('[data-copy]')) {
         try { navigator.clipboard.writeText(m.body || ''); toast('📋', 'Copied', 'Message copied'); } catch (_) {}

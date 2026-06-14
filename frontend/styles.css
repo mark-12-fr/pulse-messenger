@@ -734,3 +734,39 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .modal-card h3 { margin: 0 0 16px; font-size: 19px; font-weight: 750; }
 .modal-actions { display: flex; gap: 10px; margin-top: 8px; }
 .modal-actions .btn-soft, .modal-actions .btn-primary { flex: 1; padding: 12px; border-radius: 12px; text-align: center; }
+
+/* ===== swipe-to-reply · reply quote · reply bar ===== */
+.messages { overflow-x: hidden; }
+.msg { transition: transform .2s var(--ease); }
+.msg.swiping { transition: none; }
+.msg.swipe-armed { opacity: .82; }
+
+.reply-quote {
+  font-size: 12.5px;
+  color: var(--text-soft);
+  background: var(--hover);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px 9px;
+  margin-bottom: 3px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reply-quote .rq-who { font-weight: 700; }
+
+.reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 8px 8px 8px 12px;
+  background: var(--field);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px 12px 0 0;
+  animation: fadeUp .2s var(--ease);
+}
+.reply-bar-main { flex: 1; min-width: 0; }
+.reply-bar-label { font-size: 12px; font-weight: 700; color: var(--accent); }
+.reply-bar-text { font-size: 13px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

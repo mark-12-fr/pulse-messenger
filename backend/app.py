@@ -425,6 +425,7 @@ def on_message_send(payload):
     to_user_id = int(payload.get("toUserId") or 0)
     body = str(payload.get("body") or "")[:5000]
     attachment = payload.get("attachment")
+    reply_to_id = int(payload.get("replyToId") or 0) or None
 
     if not to_user_id:
         return {"error": "Missing recipient."}
@@ -436,11 +437,16 @@ def on_message_send(payload):
         return {"error": "You can only message your friends."}
 
     conv = db.get_or_create_conversation(uid, to_user_id)
+    if reply_to_id:
+        rmeta = db.get_message_meta(reply_to_id)
+        if not rmeta or rmeta["conversationId"] != conv["id"]:
+            reply_to_id = None
     msg = db.create_message(
         conv["id"], uid, body,
         attachment.get("url") if attachment else None,
         attachment.get("type") if attachment else None,
         attachment.get("name") if attachment else None,
+        reply_to_id=reply_to_id,
     )
     db.mark_read(conv["id"], uid, msg["id"])
 

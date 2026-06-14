@@ -108,6 +108,7 @@ class Message(Base):
     attachment_type = mapped_column(String(16), nullable=True)   # image | video | file
     attachment_name = mapped_column(Text, nullable=True)
     unsent = mapped_column(Boolean, nullable=False, default=False)
+    reply_to_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
 
@@ -170,7 +171,20 @@ def public_message(m):
         "unsent": bool(m.unsent),
         "createdAt": _iso(m.created_at),
         "reactions": [],
+        "replyTo": None,
     }
+
+
+def _msg_preview(m):
+    if m.unsent:
+        return "unsent a message"
+    if m.attachment_type == "image":
+        return "📷 Photo"
+    if m.attachment_type == "video":
+        return "🎥 Video"
+    if m.attachment_type == "file":
+        return "📎 " + (m.attachment_name or "File")
+    return (m.body or "")[:80]
 
 
 # ---------------------------------------------------------------------------
@@ -411,17 +425,24 @@ def is_conversation_member(conv, uid):
 # Messages
 # ---------------------------------------------------------------------------
 def create_message(conversation_id, sender_id, body=None,
-                   attachment_url=None, attachment_type=None, attachment_name=None):
+                   attachment_url=None, attachment_type=None, attachment_name=None,
+                   reply_to_id=None):
     with session_scope() as s:
         m = Message(
             conversation_id=conversation_id, sender_id=sender_id,
             body=body or None, attachment_url=attachment_url or None,
             attachment_type=attachment_type or None, attachment_name=attachment_name or None,
+            reply_to_id=reply_to_id or None,
             created_at=now_utc(),
         )
         s.add(m)
         s.flush()
-        return public_message(m)
+        d = public_message(m)
+        if reply_to_id:
+            o = s.get(Message, reply_to_id)
+            if o:
+                d["replyTo"] = {"id": o.id, "senderId": o.sender_id, "preview": _msg_preview(o)}
+        return d
 
 
 def get_messages(conversation_id):
@@ -441,6 +462,16 @@ def get_messages(conversation_id):
                 bucket.setdefault(r.message_id, []).append({"emoji": r.emoji, "userId": r.user_id})
             for m in msgs:
                 m["reactions"] = bucket.get(m["id"], [])
+        reply_ids = {r.reply_to_id for r in rows if r.reply_to_id}
+        if reply_ids:
+            originals = s.execute(
+                select(Message).where(Message.id.in_(reply_ids))
+            ).scalars().all()
+            omap = {o.id: o for o in originals}
+            for md, mr in zip(msgs, rows):
+                if mr.reply_to_id and mr.reply_to_id in omap:
+                    o = omap[mr.reply_to_id]
+                    md["replyTo"] = {"id": o.id, "senderId": o.sender_id, "preview": _msg_preview(o)}
         return msgs
 
 
