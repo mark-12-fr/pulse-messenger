@@ -7,7 +7,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const BUCKET = "media";
-const RETENTION_HOURS = 5;
+const RETENTION_HOURS = 3;
 
 Deno.serve(async (_req: Request) => {
   try {

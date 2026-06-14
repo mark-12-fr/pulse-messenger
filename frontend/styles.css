@@ -699,3 +699,38 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .mm-act:last-child { border-bottom: none; }
 .mm-act:active { background: var(--hover); }
 .mm-act.danger { color: var(--danger); }
+
+/* ===== chat-header more · unsent tombstone · profile modal ===== */
+.chat-more { margin-left: auto; }
+.me { cursor: pointer; padding: 5px 8px; margin: -5px -8px; border-radius: 12px; transition: background .15s var(--ease); }
+.me:hover { background: var(--hover); }
+
+.bubble.unsent {
+  background: transparent !important;
+  border: 1.5px dashed var(--line);
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13.5px;
+  box-shadow: none !important;
+}
+
+.modal {
+  position: fixed; inset: 0; z-index: 320;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0); opacity: 0;
+  transition: opacity .2s var(--ease), background .2s var(--ease);
+}
+.modal.show { opacity: 1; background: rgba(0, 0, 0, .5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.modal-card {
+  width: min(400px, 100%);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 22px; padding: 22px;
+  box-shadow: var(--shadow);
+  transform: translateY(16px) scale(.98);
+  transition: transform .25s var(--ease);
+}
+.modal.show .modal-card { transform: none; }
+.modal-card h3 { margin: 0 0 16px; font-size: 19px; font-weight: 750; }
+.modal-actions { display: flex; gap: 10px; margin-top: 8px; }
+.modal-actions .btn-soft, .modal-actions .btn-primary { flex: 1; padding: 12px; border-radius: 12px; text-align: center; }

@@ -200,6 +200,23 @@ def me():
     return jsonify(user=g.user)
 
 
+@app.post("/api/me/update")
+@auth_required
+def update_me():
+    data = request.get_json(silent=True) or {}
+    me_id = g.user["id"]
+    display_name = str(data.get("displayName", "")).strip()
+    username = str(data.get("username", "")).strip().lower()
+    if not (1 <= len(display_name) <= 40):
+        return jsonify(error="Display name must be 1-40 characters."), 400
+    if not USERNAME_RE.match(username):
+        return jsonify(error="Username must be 3-20 characters (letters, numbers, _ or . only)."), 400
+    if username != g.user["username"] and db.username_exists(username):
+        return jsonify(error="That username is already taken."), 409
+    user = db.update_user(me_id, display_name, username)
+    return jsonify(user=user)
+
+
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
@@ -265,6 +282,19 @@ def friend_respond():
         db.delete_friendship(request_id)
         return jsonify(ok=True, status="declined")
     return jsonify(error="Invalid action."), 400
+
+
+@app.post("/api/friends/remove")
+@auth_required
+def friend_remove():
+    data = request.get_json(silent=True) or {}
+    other_id = int(data.get("userId") or 0)
+    me_id = g.user["id"]
+    if not other_id:
+        return jsonify(error="Invalid user."), 400
+    db.remove_friend(me_id, other_id)
+    emit_to_user(other_id, "friend:removed", {"userId": me_id})
+    return jsonify(ok=True)
 
 
 @app.get("/api/friends")
@@ -501,10 +531,28 @@ def on_message_delete(payload):
     if meta["senderId"] != uid:
         return {"error": "You can only unsend your own messages."}
     conv = db.get_conversation_by_id(meta["conversationId"])
-    db.delete_message(message_id)
+    db.unsend_message(message_id)
     data = {"messageId": message_id, "conversationId": meta["conversationId"]}
-    emit_to_user(uid, "message:deleted", data)
-    emit_to_user(db.conversation_partner_id(conv, uid), "message:deleted", data)
+    emit_to_user(uid, "message:unsent", data)
+    emit_to_user(db.conversation_partner_id(conv, uid), "message:unsent", data)
+    return {"ok": True}
+
+
+@socketio.on("conversation:delete")
+def on_conversation_delete(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    cid = int(payload.get("conversationId") or 0)
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, uid):
+        return {"error": "Not allowed."}
+    db.delete_conversation_messages(cid)
+    partner_id = db.conversation_partner_id(conv, uid)
+    data = {"conversationId": cid}
+    emit_to_user(uid, "conversation:cleared", data)
+    emit_to_user(partner_id, "conversation:cleared", data)
     return {"ok": True}
 
 

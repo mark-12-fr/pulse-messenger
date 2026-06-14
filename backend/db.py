@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     create_engine, select, or_, func,
-    Integer, String, Text, DateTime, ForeignKey, UniqueConstraint, Index,
+    Integer, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, Index,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, mapped_column
 from sqlalchemy.exc import IntegrityError
@@ -107,6 +107,7 @@ class Message(Base):
     attachment_url = mapped_column(Text, nullable=True)
     attachment_type = mapped_column(String(16), nullable=True)   # image | video | file
     attachment_name = mapped_column(Text, nullable=True)
+    unsent = mapped_column(Boolean, nullable=False, default=False)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
 
@@ -166,6 +167,7 @@ def public_message(m):
         "attachmentUrl": m.attachment_url,
         "attachmentType": m.attachment_type,
         "attachmentName": m.attachment_name,
+        "unsent": bool(m.unsent),
         "createdAt": _iso(m.created_at),
         "reactions": [],
     }
@@ -209,6 +211,17 @@ def set_last_seen(uid, when=None):
         u = s.get(User, uid)
         if u:
             u.last_seen = when or now_utc()
+
+
+def update_user(uid, display_name, username):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if not u:
+            return None
+        u.display_name = display_name
+        u.username = username
+        s.flush()
+        return public_user(u)
 
 
 def search_users(me_id, query):
@@ -275,6 +288,20 @@ def accept_friendship(fid):
 def delete_friendship(fid):
     with session_scope() as s:
         f = s.get(Friendship, fid)
+        if f:
+            s.delete(f)
+
+
+def remove_friend(me_id, other_id):
+    with session_scope() as s:
+        f = s.execute(
+            select(Friendship).where(
+                or_(
+                    (Friendship.requester_id == me_id) & (Friendship.addressee_id == other_id),
+                    (Friendship.requester_id == other_id) & (Friendship.addressee_id == me_id),
+                )
+            )
+        ).scalar_one_or_none()
         if f:
             s.delete(f)
 
@@ -440,6 +467,35 @@ def delete_message(message_id):
         m = s.get(Message, message_id)
         if m:
             s.delete(m)  # reactions cascade-delete via FK
+
+
+def unsend_message(message_id):
+    """Soft-delete: keep the row as an 'unsent' tombstone but wipe its content."""
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m:
+            return
+        m.unsent = True
+        m.body = None
+        m.attachment_url = None
+        m.attachment_type = None
+        m.attachment_name = None
+        for r in s.execute(
+            select(MessageReaction).where(MessageReaction.message_id == message_id)
+        ).scalars().all():
+            s.delete(r)
+
+
+def delete_conversation_messages(conversation_id):
+    with session_scope() as s:
+        for m in s.execute(
+            select(Message).where(Message.conversation_id == conversation_id)
+        ).scalars().all():
+            s.delete(m)
+        for mr in s.execute(
+            select(MessageRead).where(MessageRead.conversation_id == conversation_id)
+        ).scalars().all():
+            s.delete(mr)
 
 
 def toggle_reaction(message_id, user_id, emoji):

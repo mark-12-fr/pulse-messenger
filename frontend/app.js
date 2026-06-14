@@ -223,7 +223,9 @@
     socket.on('typing', onTyping);
     socket.on('message:read', onMessageRead);
     socket.on('message:reaction', onMessageReaction);
-    socket.on('message:deleted', onMessageDeleted);
+    socket.on('message:unsent', onMessageUnsent);
+    socket.on('conversation:cleared', onConversationCleared);
+    socket.on('friend:removed', onFriendRemoved);
   }
 
   // ============================================================
@@ -253,6 +255,7 @@
 
   function previewText(msg) {
     if (!msg) return '';
+    if (msg.unsent) return msg.senderId === state.me.id ? 'You unsent a message' : 'Unsent a message';
     const mine = msg.senderId === state.me.id ? 'You: ' : '';
     if (msg.attachmentType === 'image') return mine + '📷 Photo';
     if (msg.attachmentType === 'video') return mine + '🎥 Video';
@@ -648,6 +651,10 @@
   }
 
   function renderBubble(m) {
+    if (m.unsent) {
+      const name = m.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || 'They');
+      return `<div class="bwrap"><div class="bubble unsent">🚫 ${escapeHtml(name)} unsent a message</div></div>`;
+    }
     const t = `<span class="m-time">${fmtTime(m.createdAt)}</span>`;
     const rx = reactionsHtml(m);
     let inner;
@@ -667,13 +674,14 @@
   }
 
   // ---------- back button (mobile) ----------
-  $('#back-btn').addEventListener('click', () => {
+  function backToList() {
     appScreen.classList.remove('in-chat');
     state.current = null;
     $('#chat-active').classList.add('hidden');
     $('#chat-empty').classList.remove('hidden');
     renderChats();
-  });
+  }
+  $('#back-btn').addEventListener('click', backToList);
 
   // ============================================================
   // COMPOSER (send / typing / attachments)
@@ -990,7 +998,7 @@
   function openMsgMenu(msgEl) {
     const mid = Number(msgEl.dataset.mid);
     const m = state.messages.find((x) => x.id === mid);
-    if (!m) return;
+    if (!m || m.unsent) return;
     const mine = m.senderId === state.me.id;
     const myReact = (m.reactions || []).find((r) => r.userId === state.me.id);
     const overlay = document.createElement('div');
@@ -1056,21 +1064,128 @@
     if (time) time.insertAdjacentHTML('beforebegin', html);
     else wrap.insertAdjacentHTML('beforeend', html);
   }
-  function onMessageDeleted(payload) {
-    if (state.current && state.current.conversationId === payload.conversationId) {
-      const i = state.messages.findIndex((x) => x.id === payload.messageId);
-      if (i !== -1) state.messages.splice(i, 1);
-      const el = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"]`);
-      if (el) el.remove();
-      if (!state.messages.length) renderMessages();
-      else updateSeenRow();
+  function onMessageUnsent(payload) {
+    const m = state.messages.find((x) => x.id === payload.messageId);
+    if (m) {
+      m.unsent = true; m.body = null;
+      m.attachmentUrl = null; m.attachmentType = null; m.attachmentName = null;
+      m.reactions = [];
+      if (state.current && state.current.conversationId === payload.conversationId) {
+        const bwrap = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"] .bwrap`);
+        if (bwrap) bwrap.outerHTML = renderBubble(m);
+        updateSeenRow();
+      }
     }
     const conv = state.conversations.get(payload.conversationId);
-    if (conv && conv.lastMessage && conv.lastMessage.id === payload.messageId &&
-        state.current && state.current.conversationId === payload.conversationId) {
-      conv.lastMessage = state.messages.length ? state.messages[state.messages.length - 1] : conv.lastMessage;
+    if (conv && conv.lastMessage && conv.lastMessage.id === payload.messageId) {
+      conv.lastMessage = m || conv.lastMessage;
       renderChats();
     }
+  }
+
+  function onConversationCleared(payload) {
+    state.conversations.delete(payload.conversationId);
+    if (state.current && state.current.conversationId === payload.conversationId) {
+      state.messages = [];
+      backToList();
+    }
+    renderChats();
+  }
+
+  function removeFriendLocal(userId) {
+    state.friends.delete(userId);
+    for (const [cid, c] of state.conversations) {
+      if (c.friend && c.friend.id === userId) state.conversations.delete(cid);
+    }
+    if (state.current && state.current.peer && state.current.peer.id === userId) backToList();
+    renderAll();
+  }
+  function onFriendRemoved(payload) { removeFriendLocal(payload.userId); }
+
+  // ---- chat header menu: delete conversation / unfriend ----
+  const chatMoreBtn = document.getElementById('chat-more-btn');
+  if (chatMoreBtn) chatMoreBtn.addEventListener('click', openChatMenu);
+
+  function openChatMenu() {
+    if (!state.current) return;
+    const peer = state.current.peer;
+    const cid = state.current.conversationId;
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="mm-actions">
+          <button class="mm-act" data-delconv="1">Delete conversation</button>
+          <button class="mm-act danger" data-unfriend="1">Unfriend ${escapeHtml(peer.displayName)}</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target.closest('[data-delconv]')) { close(); if (confirm('Delete this conversation for both of you?')) deleteConversation(cid); return; }
+      if (e.target.closest('[data-unfriend]')) { close(); if (confirm('Unfriend ' + peer.displayName + '?')) unfriend(peer.id); return; }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  function deleteConversation(cid) {
+    if (!state.socket) return;
+    state.socket.emit('conversation:delete', { conversationId: cid }, (resp) => {
+      if (resp && resp.error) toast('⚠️', 'Error', resp.error);
+    });
+  }
+  async function unfriend(userId) {
+    try {
+      await api('/api/friends/remove', { method: 'POST', body: { userId } });
+      removeFriendLocal(userId);
+      toast('👋', 'Unfriended', 'Removed from your friends');
+    } catch (e) { toast('⚠️', 'Error', e.message); }
+  }
+
+  // ---- edit own profile (display name + username) ----
+  const meHeaderEl = $('.me');
+  if (meHeaderEl) meHeaderEl.addEventListener('click', openProfileEditor);
+
+  function openProfileEditor() {
+    if (!state.me) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>Edit profile</h3>
+        <div class="field"><label>Display name</label><input id="pe-name" maxlength="40" value="${escapeHtml(state.me.displayName)}"></div>
+        <div class="field"><label>Username</label><input id="pe-username" maxlength="20" value="${escapeHtml(state.me.username)}"></div>
+        <div id="pe-err" class="auth-error"></div>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-primary" id="pe-save">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
+    overlay.querySelector('#pe-save').addEventListener('click', async () => {
+      const displayName = overlay.querySelector('#pe-name').value.trim();
+      const username = overlay.querySelector('#pe-username').value.trim();
+      const errBox = overlay.querySelector('#pe-err');
+      const saveBtn = overlay.querySelector('#pe-save');
+      saveBtn.disabled = true;
+      try {
+        const { user } = await api('/api/me/update', { method: 'POST', body: { displayName, username } });
+        state.me = user;
+        renderMeHeader();
+        if (state.current) renderMessages();
+        close();
+        toast('✅', 'Saved', 'Profile updated');
+      } catch (e2) {
+        errBox.textContent = e2.message;
+        errBox.classList.add('error', 'show');
+        saveBtn.disabled = false;
+      }
+    });
   }
 
   // ============================================================
