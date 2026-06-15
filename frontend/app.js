@@ -121,6 +121,8 @@
     $$('.auth-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
     $('#auth-submit').textContent = mode === 'login' ? 'Log in' : 'Create account';
     showAuthError('');
+    const f = $('#auth-form');
+    if (f) { f.classList.remove('mode-anim'); void f.offsetWidth; f.classList.add('mode-anim'); }
   }
   function showAuthMsg(msg, type = 'error') {
     const box = $('#auth-error');
@@ -313,7 +315,7 @@
         ${avatarHtml(f, { dot: !!f.online })}
         <div class="row-main">
           <div class="row-name">${escapeHtml(f.displayName)}</div>
-          <div class="row-sub">${f.online ? 'Active now' : 'Offline'} · @${escapeHtml(f.username)}</div>
+          <div class="row-sub">${f.online ? 'Online' : 'Offline'}</div>
         </div>
       </div>`
       )
@@ -1405,10 +1407,23 @@
   const ACCENTS = [
     { id: 'blue', c1: '#0a7cff', c2: '#6c46ff' },
     { id: 'violet', c1: '#7c3aed', c2: '#c026d3' },
-    { id: 'green', c1: '#10b981', c2: '#0ea5e9' },
+    { id: 'ocean', c1: '#0ea5e9', c2: '#2563eb' },
+    { id: 'teal', c1: '#06b6d4', c2: '#0d9488' },
+    { id: 'green', c1: '#10b981', c2: '#22c55e' },
+    { id: 'lime', c1: '#84cc16', c2: '#10b981' },
+    { id: 'sunset', c1: '#ff8a3d', c2: '#ff3d77' },
     { id: 'pink', c1: '#ff4f8b', c2: '#ff7a45' },
-    { id: 'orange', c1: '#ff8a3d', c2: '#ff5e3a' },
+    { id: 'rose', c1: '#f43f5e', c2: '#ec4899' },
+    { id: 'gold', c1: '#f59e0b', c2: '#ef4444' },
+    { id: 'crimson', c1: '#ef4444', c2: '#b91c1c' },
+    { id: 'mono', c1: '#64748b', c2: '#334155' },
   ];
+  const IC = {
+    bell: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+    send: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+    user: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    logout: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>',
+  };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
     const s = document.documentElement.style;
@@ -1496,10 +1511,10 @@
           </div>
         </div>
         <div class="set-section set-list">
-          <button class="set-row" data-notif="1"><span>🔔 Notifications</span><span class="set-state" id="set-notif">…</span></button>
-          <button class="set-row" data-notif-test="1"><span>📨 Send test notification</span><span class="set-state">›</span></button>
-          <button class="set-row" data-editprofile="1"><span>👤 Edit profile</span><span class="set-state">›</span></button>
-          <button class="set-row danger" data-logout="1"><span>🚪 Log out</span></button>
+          <button class="set-row" data-notif="1"><span class="set-main">${IC.bell}<span>Notifications</span></span><span class="set-state" id="set-notif">…</span></button>
+          <button class="set-row" data-notif-test="1"><span class="set-main">${IC.send}<span>Send test notification</span></span><span class="set-state">›</span></button>
+          <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
+          <button class="set-row danger" data-logout="1"><span class="set-main">${IC.logout}<span>Log out</span></span></button>
         </div>
         <button class="mm-act" data-cancel="1">Close</button>
       </div>`;

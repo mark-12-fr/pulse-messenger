@@ -791,10 +791,19 @@ input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-ca
 .seg { display: flex; gap: 8px; }
 .seg button { flex: 1; border: 1.5px solid var(--line); background: transparent; color: var(--text); padding: 11px; border-radius: 13px; font-weight: 650; font-size: 14px; transition: border-color .15s var(--ease), background .15s var(--ease), color .15s var(--ease); }
 .seg button.on { border-color: var(--accent); background: var(--active); color: var(--accent); }
-.swatches { display: flex; gap: 12px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 12px; }
 .swatch { width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid transparent; box-shadow: var(--shadow-soft); transition: transform .12s var(--ease), border-color .15s var(--ease); }
 .swatch.on { border-color: var(--text); transform: scale(1.1); }
 .set-row { display: flex; align-items: center; justify-content: space-between; width: 100%; border: none; background: transparent; color: var(--text); padding: 14px 12px; font-size: 15px; font-weight: 600; border-radius: 13px; transition: background .15s var(--ease); }
 .set-row:active { background: var(--hover); }
 .set-row.danger { color: var(--danger); }
 .set-state { color: var(--text-faint); font-weight: 700; font-size: 13.5px; }
+.set-main { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.set-main > svg { color: var(--text-soft); flex: none; }
+.set-row.danger .set-main > svg { color: var(--danger); }
+
+/* smooth login/signup switch */
+.auth-form.mode-anim { animation: fadeUp .28s var(--ease); }
+
+/* premium toast feedback */
+.toast { border-radius: 18px; box-shadow: 0 14px 36px rgba(0, 0, 0, .3), var(--shadow); }

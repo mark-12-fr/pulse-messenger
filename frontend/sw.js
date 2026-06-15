@@ -15,6 +15,7 @@ self.addEventListener('push', (event) => {
       badge: '/icon-192.png',
       tag: 'tea-message',
       renotify: true,
+      vibrate: [80, 40, 80],
     })
   );
 });
