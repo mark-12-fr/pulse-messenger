@@ -15,6 +15,17 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  // ---- deter casual right-click / view-source / inspect (NOT real security) ----
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('keydown', (e) => {
+    const k = (e.key || '').toLowerCase();
+    if (e.key === 'F12'
+      || (e.ctrlKey && !e.shiftKey && k === 'u')                                    // view source
+      || ((e.ctrlKey || e.metaKey) && e.shiftKey && (k === 'i' || k === 'j' || k === 'c'))) { // devtools
+      e.preventDefault();
+    }
+  });
+
   const escapeHtml = (s) =>
     String(s == null ? '' : s)
       .replace(/&/g, '&amp;')
