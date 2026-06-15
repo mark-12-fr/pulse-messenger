@@ -24,6 +24,8 @@
         var t = localStorage.getItem('tea_theme');
         if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', t);
+        // if a session exists, show the loading splash instead of flashing the login page
+        if (localStorage.getItem('pulse_token')) document.documentElement.classList.add('resume');
       } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
     })();
   </script>
@@ -34,6 +36,12 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+
+  <!-- splash shown while resuming a saved session (no login-page flash) -->
+  <div id="splash" class="splash">
+    <div class="splash-logo">🍵</div>
+    <div class="splash-ring"></div>
+  </div>
 
   <!-- ============================== AUTH SCREEN ============================== -->
   <div id="auth-screen" class="auth-screen">

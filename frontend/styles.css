@@ -859,3 +859,38 @@ input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-ca
 .send-btn:not(:disabled):hover { transform: perspective(500px) translateZ(5px) scale(1.08); }
 .row:hover { transform: translateY(-1px); }
 .reactions { animation: popIn3D .3s var(--ease); }
+
+/* ===================== splash + app entrance ===================== */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes splashPop { from { opacity: 0; transform: scale(.5) rotate(-18deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
+@keyframes slideInLeft { from { opacity: 0; transform: translateX(-34px); } to { opacity: 1; transform: none; } }
+
+#splash { display: none; }
+html.resume #splash { display: flex; }
+html.resume #auth-screen { display: none; }
+
+.splash {
+  position: fixed; inset: 0; z-index: 500;
+  flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  background: radial-gradient(120% 90% at 50% 28%, var(--bg-2), var(--bg) 70%);
+}
+.splash-logo {
+  font-size: 46px; width: 96px; height: 96px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-grad); border-radius: 28px;
+  box-shadow: 0 22px 55px rgba(10, 124, 255, .42);
+  animation: splashPop .6s var(--ease) both, logoFloat 3.2s ease-in-out .6s infinite;
+}
+.splash-ring {
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+
+/* entrance choreography when you land in the app after login */
+.app-screen:not(.hidden) .sidebar { animation: slideInLeft .5s var(--ease) both; }
+.app-screen:not(.hidden) .sidebar-head { animation: fadeUp .5s var(--ease) .08s both; }
+.app-screen:not(.hidden) .search-wrap { animation: fadeUp .5s var(--ease) .15s both; }
+.app-screen:not(.hidden) .tabs { animation: fadeUp .5s var(--ease) .22s both; }
+.app-screen:not(.hidden) .list-scroll { animation: fadeUp .55s var(--ease) .28s both; }
+.app-screen:not(.hidden) .chat { animation: fadeUp .6s var(--ease) .14s both; }

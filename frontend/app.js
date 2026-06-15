@@ -191,6 +191,8 @@
       conversations: new Map(), requests: { incoming: [], outgoing: [] },
       current: null, messages: [], attachment: null,
     });
+    document.documentElement.classList.remove('resume');
+    $('#splash').classList.add('hidden');
     appScreen.classList.add('hidden');
     authScreen.classList.remove('hidden');
     $('#auth-form').reset();
@@ -202,6 +204,7 @@
   // ============================================================
   async function enterApp() {
     authScreen.classList.add('hidden');
+    $('#splash').classList.add('hidden');
     appScreen.classList.remove('hidden');
 
     // header
@@ -1590,6 +1593,8 @@
       }
     }
     showAuthMsg('Server is waking up — please try again.', 'error');
+    document.documentElement.classList.remove('resume');
+    $('#splash').classList.add('hidden');
   }
   boot();
 })();
