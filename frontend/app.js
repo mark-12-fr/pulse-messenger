@@ -1523,7 +1523,6 @@
         </div>
         <div class="set-section set-list">
           <button class="set-row" data-notif="1"><span class="set-main">${IC.bell}<span>Notifications</span></span><span class="set-state" id="set-notif">…</span></button>
-          <button class="set-row" data-notif-test="1"><span class="set-main">${IC.send}<span>Send test notification</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
           <button class="set-row danger" data-logout="1"><span class="set-main">${IC.logout}<span>Log out</span></span></button>
         </div>

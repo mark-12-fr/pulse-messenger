@@ -807,3 +807,55 @@ input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-ca
 
 /* premium toast feedback */
 .toast { border-radius: 18px; box-shadow: 0 14px 36px rgba(0, 0, 0, .3), var(--shadow); }
+.toast { animation: toast3DIn .4s var(--ease); }
+
+/* ===================== premium 3D + extra animations ===================== */
+@keyframes card3DIn {
+  from { opacity: 0; transform: perspective(1200px) rotateX(14deg) translateY(34px) scale(.95); }
+  to   { opacity: 1; transform: perspective(1200px) rotateX(0) translateY(0) scale(1); }
+}
+@keyframes logoFloat {
+  0%, 100% { transform: perspective(600px) rotateY(-10deg) translateY(0); }
+  50%      { transform: perspective(600px) rotateY(10deg) translateY(-7px); }
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: perspective(800px) rotateX(-12deg) translateY(13px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes popIn3D {
+  from { opacity: 0; transform: perspective(700px) rotateX(-22deg) scale(.88); }
+  to   { opacity: 1; transform: perspective(700px) rotateX(0) scale(1); }
+}
+@keyframes toast3DIn {
+  from { opacity: 0; transform: perspective(700px) rotateY(-22deg) translateX(28px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes floatSlow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes gradShift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+@keyframes shineSweep { 0% { background-position: 220% 0; } 100% { background-position: -220% 0; } }
+
+/* animated gradient + 3D card entrance on the auth screen */
+.auth-screen { background-size: 220% 220%; animation: gradShift 16s ease infinite; }
+.auth-card { animation: card3DIn .6s var(--ease) both; }
+.auth-logo { animation: pop .55s var(--ease) both, logoFloat 5.5s ease-in-out .55s infinite; }
+.auth-brand h1 { animation: fadeUp .5s var(--ease) .12s both; }
+.auth-tabs { animation: fadeUp .5s var(--ease) .16s both; }
+
+/* moving shine on the main button */
+.btn-primary { position: relative; overflow: hidden; }
+.btn-primary::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(110deg, transparent 35%, rgba(255, 255, 255, .25) 50%, transparent 65%);
+  background-size: 220% 100%;
+  animation: shineSweep 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 3D depth on press + hover */
+.btn-primary:active, .btn-accept:active, .send-btn:active, .icon-btn:active,
+.swatch:active, .mm-react:active, .emoji-pick:active {
+  transform: perspective(420px) translateZ(-7px) scale(.93);
+}
+.send-btn:not(:disabled):hover { transform: perspective(500px) translateZ(5px) scale(1.08); }
+.row:hover { transform: translateY(-1px); }
+.reactions { animation: popIn3D .3s var(--ease); }
