@@ -149,10 +149,16 @@ def auth_required(fn):
 # ---------------------------------------------------------------------------
 online = {}        # user_id -> set(sid)
 sid_user = {}      # sid -> user_id
+active_sids = set()  # sids whose app is currently in the foreground
 
 
 def is_online(uid):
     return uid in online and len(online[uid]) > 0
+
+
+def is_active(uid):
+    """True if any of the user's sessions has the app in the foreground."""
+    return any(sid in active_sids for sid in online.get(uid, ()))
 
 
 def emit_to_user(uid, event, data):
@@ -332,11 +338,25 @@ def friend_remove():
 def friends():
     me_id = g.user["id"]
     rows = db.list_friends(me_id)
+    nicks = db.get_nicknames(me_id)
     out = []
     for u in rows:
         conv = db.get_or_create_conversation(me_id, u["id"])
-        out.append({**u, "online": is_online(u["id"]), "conversationId": conv["id"]})
+        out.append({**u, "online": is_online(u["id"]), "conversationId": conv["id"],
+                    "nickname": nicks.get(u["id"])})
     return jsonify(friends=out)
+
+
+@app.post("/api/friends/nickname")
+@auth_required
+def friend_nickname():
+    data = request.get_json(silent=True) or {}
+    friend_id = int(data.get("userId") or 0)
+    nickname = str(data.get("nickname", "")).strip()[:40]
+    if not friend_id:
+        return jsonify(error="Invalid user."), 400
+    db.set_nickname(g.user["id"], friend_id, nickname)
+    return jsonify(ok=True, nickname=nickname or None)
 
 
 @app.get("/api/friends/requests")
@@ -472,6 +492,7 @@ def on_connect(auth):
 @socketio.on("disconnect")
 def on_disconnect():
     sid = request.sid
+    active_sids.discard(sid)
     uid = sid_user.pop(sid, None)
     if uid is None:
         return
@@ -482,6 +503,17 @@ def on_disconnect():
             online.pop(uid, None)
             db.set_last_seen(uid)
             broadcast_presence(uid, False)
+
+
+@socketio.on("presence:active")
+def on_presence_active(payload):
+    sid = request.sid
+    if sid not in sid_user:
+        return
+    if (payload or {}).get("active"):
+        active_sids.add(sid)
+    else:
+        active_sids.discard(sid)
 
 
 @socketio.on("message:send")
@@ -524,10 +556,12 @@ def on_message_send(payload):
 
     emit_to_user(uid, "message:new", envelope)
     emit_to_user(to_user_id, "message:new", envelope)
-    # Always push to the recipient; the service worker only displays it when the
-    # app is NOT in the foreground, so backgrounded/closed devices get notified too.
-    socketio.start_background_task(push.send_to_user, to_user_id,
-                                   sender["displayName"], "Sent you a message")
+    # Push only when the recipient isn't actively using the app in the foreground.
+    # They still get notified when backgrounded, at the home screen, or phone closed
+    # (iPhone or Android) — but never pinged mid-conversation.
+    if not is_active(to_user_id):
+        socketio.start_background_task(push.send_to_user, to_user_id,
+                                       sender["displayName"], "Sent you a message")
     return {"ok": True, "message": msg}
 
 

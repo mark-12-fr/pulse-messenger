@@ -147,6 +147,13 @@ class AppConfig(Base):
     value = mapped_column(Text, nullable=False)
 
 
+class FriendNickname(Base):
+    __tablename__ = "friend_nicknames"
+    owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    friend_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    nickname = mapped_column(Text, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -685,3 +692,24 @@ def get_push_subscriptions(user_id):
             select(PushSubscription).where(PushSubscription.user_id == user_id)
         ).scalars().all()
         return [{"endpoint": r.endpoint, "p256dh": r.p256dh, "auth": r.auth} for r in rows]
+
+
+def set_nickname(owner_id, friend_id, nickname):
+    with session_scope() as s:
+        existing = s.get(FriendNickname, (owner_id, friend_id))
+        if not nickname:
+            if existing:
+                s.delete(existing)
+            return
+        if existing:
+            existing.nickname = nickname
+        else:
+            s.add(FriendNickname(owner_id=owner_id, friend_id=friend_id, nickname=nickname))
+
+
+def get_nicknames(owner_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(FriendNickname).where(FriendNickname.owner_id == owner_id)
+        ).scalars().all()
+        return {r.friend_id: r.nickname for r in rows}

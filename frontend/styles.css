@@ -894,3 +894,17 @@ html.resume #auth-screen { display: none; }
 .app-screen:not(.hidden) .tabs { animation: fadeUp .5s var(--ease) .22s both; }
 .app-screen:not(.hidden) .list-scroll { animation: fadeUp .55s var(--ease) .28s both; }
 .app-screen:not(.hidden) .chat { animation: fadeUp .6s var(--ease) .14s both; }
+
+/* subtle 3D interactions */
+.avatar { transition: transform .2s var(--ease), box-shadow .2s var(--ease); }
+.row:hover .avatar { transform: scale(1.06) rotate(-3deg); }
+.msg .bubble { transition: transform .16s var(--ease), box-shadow .2s var(--ease); }
+.msg:hover .bubble { transform: translateY(-1px); }
+.tab { position: relative; }
+.tab.active { border-bottom-color: transparent; }
+.tab.active::after {
+  content: ""; position: absolute; left: 18%; right: 18%; bottom: -1px; height: 2.5px;
+  border-radius: 3px; background: var(--accent-grad);
+  animation: tabIn .3s var(--ease);
+}
+@keyframes tabIn { from { transform: scaleX(0); opacity: 0; } to { transform: scaleX(1); opacity: 1; } }

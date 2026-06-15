@@ -40,6 +40,9 @@
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
 
+  // A friend's display name, overridden by the user's private nickname if set.
+  const friendName = (f) => (f && (f.nickname || f.displayName)) || '';
+
   function avatarHtml(user, opts = {}) {
     const cls = opts.cls || '';
     const color = user.avatarColor || '#0084ff';
@@ -230,6 +233,8 @@
     const socket = API_BASE ? io(API_BASE, opts) : io(opts);
     state.socket = socket;
 
+    socket.on('connect', () => socket.emit('presence:active', { active: document.visibilityState !== 'hidden' }));
+
     socket.on('connect_error', (err) => {
       if (err && String(err.message || '').toLowerCase().includes('unauthorized')) logout();
     });
@@ -246,6 +251,14 @@
     socket.on('conversation:cleared', onConversationCleared);
     socket.on('friend:removed', onFriendRemoved);
   }
+
+  // Tell the server when the app is in the foreground vs backgrounded, so it only
+  // pushes notifications when you're NOT actively using it.
+  document.addEventListener('visibilitychange', () => {
+    if (state.socket && state.socket.connected) {
+      state.socket.emit('presence:active', { active: document.visibilityState === 'visible' });
+    }
+  });
 
   // ============================================================
   // DATA LOADERS
@@ -300,7 +313,7 @@
           ${avatarHtml(f, { dot: !!f.online })}
           <div class="row-main">
             <div class="row-top">
-              <span class="row-name">${escapeHtml(f.displayName)}</span>
+              <span class="row-name">${escapeHtml(friendName(f))}</span>
               <span class="row-time">${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
             </div>
             <div class="row-top">
@@ -328,7 +341,7 @@
       <div class="row" data-open-conv="${f.conversationId}" data-peer="${f.id}">
         ${avatarHtml(f, { dot: !!f.online })}
         <div class="row-main">
-          <div class="row-name">${escapeHtml(f.displayName)}</div>
+          <div class="row-name">${escapeHtml(friendName(f))}</div>
           <div class="row-sub">${f.online ? 'Online' : 'Offline'}</div>
         </div>
       </div>`
@@ -560,7 +573,7 @@
       'class="avatar',
       'id="peer-avatar" class="avatar'
     );
-    $('#peer-name').textContent = peer.displayName;
+    $('#peer-name').textContent = friendName(peer);
     updatePeerStatus();
 
     $('#messages').innerHTML = `<div class="empty-note">Loading…</div>`;
@@ -931,7 +944,7 @@
       }
     } else if (!isMine) {
       conv.unread = (conv.unread || 0) + 1;
-      toast('💬', friend.displayName, previewText(msg), () => openConversation(convId, friend.id));
+      toast('💬', friendName(friend), previewText(msg), () => openConversation(convId, friend.id));
     }
 
     renderChats();
@@ -1290,8 +1303,9 @@
     overlay.innerHTML = `
       <div class="mm-sheet">
         <div class="mm-actions">
+          <button class="mm-act" data-rename="1">Rename</button>
           <button class="mm-act" data-delconv="1">Delete conversation</button>
-          <button class="mm-act danger" data-unfriend="1">Unfriend ${escapeHtml(peer.displayName)}</button>
+          <button class="mm-act danger" data-unfriend="1">Unfriend ${escapeHtml(friendName(peer))}</button>
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
       </div>`;
@@ -1299,9 +1313,44 @@
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
     overlay.addEventListener('click', (e) => {
+      if (e.target.closest('[data-rename]')) { close(); openRenameFriend(peer); return; }
       if (e.target.closest('[data-delconv]')) { close(); if (confirm('Delete this conversation for both of you?')) deleteConversation(cid); return; }
-      if (e.target.closest('[data-unfriend]')) { close(); if (confirm('Unfriend ' + peer.displayName + '?')) unfriend(peer.id); return; }
+      if (e.target.closest('[data-unfriend]')) { close(); if (confirm('Unfriend ' + friendName(peer) + '?')) unfriend(peer.id); return; }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  function openRenameFriend(peer) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>Rename contact</h3>
+        <div class="field"><label>Nickname (only you see this)</label>
+          <input id="rn-name" maxlength="40" value="${escapeHtml(peer.nickname || '')}" placeholder="${escapeHtml(peer.displayName)}"></div>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-primary" id="rn-save">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
+    overlay.querySelector('#rn-save').addEventListener('click', async () => {
+      const nickname = overlay.querySelector('#rn-name').value.trim();
+      try {
+        await api('/api/friends/nickname', { method: 'POST', body: { userId: peer.id, nickname } });
+        const f = state.friends.get(peer.id);
+        if (f) f.nickname = nickname || null;
+        if (state.current && state.current.peer && state.current.peer.id === peer.id) {
+          state.current.peer.nickname = nickname || null;
+          $('#peer-name').textContent = friendName(state.current.peer);
+        }
+        renderAll();
+        close();
+        toast('✏️', 'Renamed', nickname ? ('Now “' + nickname + '”') : 'Reset to original');
+      } catch (e2) { toast('⚠️', 'Error', e2.message); }
     });
   }
 
