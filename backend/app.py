@@ -77,10 +77,20 @@ import push
 # ---------------------------------------------------------------------------
 db.init_db()
 
-JWT_SECRET = os.environ.get("JWT_SECRET") or secrets.token_hex(32)
-if not os.environ.get("JWT_SECRET"):
-    print("[warn] JWT_SECRET not set - using a random one (tokens reset on restart). "
-          "Set JWT_SECRET in production!")
+# Keep JWT_SECRET stable across restarts so logins persist forever (until the user
+# logs out). Prefer the env var; otherwise load — or generate once and store — it
+# in the database. Without this, a fresh random secret on each restart would
+# invalidate everyone's token and silently log them out.
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET:
+    try:
+        JWT_SECRET = db.get_config("jwt_secret")
+        if not JWT_SECRET:
+            JWT_SECRET = secrets.token_hex(32)
+            db.set_config("jwt_secret", JWT_SECRET)
+    except Exception:
+        JWT_SECRET = secrets.token_hex(32)
+        print("[warn] could not persist JWT_SECRET; logins may reset on restart.")
 
 _origin_env = os.environ.get("FRONTEND_ORIGIN", "*")
 ORIGINS = "*" if _origin_env.strip() == "*" else [o.strip() for o in _origin_env.split(",") if o.strip()]
