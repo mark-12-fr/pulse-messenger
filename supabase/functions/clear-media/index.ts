@@ -1,5 +1,6 @@
-// clear-media — deletes media files older than 5 hours from the `media` storage
-// bucket (privacy auto-clear). Invoked hourly by a pg_cron job. Uses the
+// clear-media — deletes media files older than 3 hours from the root of the
+// `media` storage bucket (privacy auto-clear). Files in sub-folders such as
+// `avatars/` are kept permanently. Invoked hourly by a pg_cron job. Uses the
 // service-role key that Supabase injects automatically, so no secrets are hardcoded.
 //
 // To redeploy after editing:
@@ -31,6 +32,9 @@ Deno.serve(async (_req: Request) => {
       if (!data || data.length === 0) break;
       for (const f of data) {
         if (!f.name) continue;
+        // Skip sub-folders (e.g. `avatars/`) — they have a null id. Profile
+        // photos live there and must never be auto-deleted.
+        if (!f.id) continue;
         const ts = f.created_at ? Date.parse(f.created_at) : 0;
         if (ts < boundaryMs) toDelete.push(f.name);
       }

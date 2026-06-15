@@ -75,6 +75,7 @@ class User(Base):
     display_name = mapped_column(String(80), nullable=False)
     password_hash = mapped_column(Text, nullable=False)
     avatar_color = mapped_column(String(16), nullable=False)
+    avatar_url = mapped_column(Text, nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -177,6 +178,7 @@ def public_user(u):
         "username": u.username,
         "displayName": u.display_name,
         "avatarColor": u.avatar_color,
+        "avatarUrl": u.avatar_url,
         "lastSeen": _iso(u.last_seen),
     }
 
@@ -252,13 +254,15 @@ def set_last_seen(uid, when=None):
             u.last_seen = when or now_utc()
 
 
-def update_user(uid, display_name, username):
+def update_user(uid, display_name, username, avatar_url=None, set_avatar=False):
     with session_scope() as s:
         u = s.get(User, uid)
         if not u:
             return None
         u.display_name = display_name
         u.username = username
+        if set_avatar:
+            u.avatar_url = avatar_url or None
         s.flush()
         return public_user(u)
 

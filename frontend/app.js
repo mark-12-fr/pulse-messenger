@@ -50,9 +50,10 @@
       opts.dot === undefined
         ? ''
         : `<span class="dot ${opts.dot ? 'on' : ''}"></span>`;
-    return `<div class="avatar ${cls}" style="background:${color}">${escapeHtml(
-      initials(user.displayName)
-    )}${dot}</div>`;
+    const inner = user.avatarUrl
+      ? `<img class="av-img" src="${escapeHtml(mediaUrl(user.avatarUrl))}" alt="" loading="lazy" />`
+      : escapeHtml(initials(user.displayName));
+    return `<div class="avatar ${cls}" style="background:${color}">${inner}${dot}</div>`;
   }
 
   function fmtTime(iso) {
@@ -1153,6 +1154,7 @@
         </div>
         <div class="mm-actions">
           <button class="mm-act" data-reply="1">Reply</button>
+          ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-forward="1">Forward</button>` : ''}
           ${mine && m.body ? `<button class="mm-act" data-edit="1">Edit</button>` : ''}
           ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
           ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
@@ -1168,6 +1170,7 @@
       if (react) { reactToMessage(mid, react.dataset.react); return close(); }
       if (e.target.closest('[data-emoji-more]')) { close(); openEmojiPicker(mid); return; }
       if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
+      if (e.target.closest('[data-forward]')) { close(); openForward(m); return; }
       if (e.target.closest('[data-edit]')) { startEdit(m); return close(); }
       if (e.target.closest('[data-unsend]')) { unsendMessage(mid); return close(); }
       if (e.target.closest('[data-copy]')) {
@@ -1176,6 +1179,65 @@
       }
       if (e.target.closest('[data-cancel]')) return close();
       // backdrop tap — ignore the trailing tap that opened the sheet
+      if (e.target === overlay && Date.now() - openedAt > 220) close();
+    });
+  }
+
+  function openForward(m) {
+    const attachment = m.attachmentUrl
+      ? { url: m.attachmentUrl, type: m.attachmentType, name: m.attachmentName }
+      : null;
+    const body = m.body || '';
+    const friends = Array.from(state.friends.values()).sort((a, b) =>
+      a.displayName.localeCompare(b.displayName)
+    );
+    const selected = new Set();
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet fwd-sheet">
+        <div class="settings-title">Forward to…</div>
+        ${friends.length ? '' : '<div class="empty-note">No friends to forward to.</div>'}
+        <div class="fwd-list">
+          ${friends.map((f) => `
+            <button class="fwd-row" data-fid="${f.id}">
+              ${avatarHtml(f)}
+              <span class="fwd-name">${escapeHtml(friendName(f))}</span>
+              <span class="fwd-check">${IC.check}</span>
+            </button>`).join('')}
+        </div>
+        <div class="mm-actions">
+          <button class="mm-act primary" id="fwd-send" disabled>Send</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const openedAt = Date.now();
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    const sendBtn = overlay.querySelector('#fwd-send');
+    overlay.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-fid]');
+      if (row) {
+        const id = Number(row.dataset.fid);
+        if (selected.has(id)) { selected.delete(id); row.classList.remove('sel'); }
+        else { selected.add(id); row.classList.add('sel'); }
+        sendBtn.disabled = selected.size === 0;
+        sendBtn.textContent = selected.size > 1 ? `Send (${selected.size})` : 'Send';
+        return;
+      }
+      if (e.target.closest('#fwd-send')) {
+        if (!selected.size || !state.socket) return;
+        selected.forEach((toUserId) => {
+          state.socket.emit('message:send', { toUserId, body, attachment, replyToId: null }, (resp) => {
+            if (resp && resp.error) toast('⚠️', 'Not forwarded', resp.error);
+          });
+        });
+        close();
+        toast('↪️', 'Forwarded', selected.size > 1 ? `Sent to ${selected.size} chats` : 'Message forwarded');
+        return;
+      }
+      if (e.target.closest('[data-cancel]')) return close();
       if (e.target === overlay && Date.now() - openedAt > 220) close();
     });
   }
@@ -1374,11 +1436,22 @@
 
   function openProfileEditor() {
     if (!state.me) return;
+    // local working copy of the photo: starts at the current one
+    let avatarUrl = state.me.avatarUrl || null;
     const overlay = document.createElement('div');
     overlay.className = 'modal';
     overlay.innerHTML = `
       <div class="modal-card">
         <h3>Edit profile</h3>
+        <div class="pe-photo">
+          <div class="pe-avatar-wrap" id="pe-avatar-wrap">
+            ${avatarHtml(state.me, { cls: 'pe-avatar' })}
+            <span class="pe-cam">${IC.camera}</span>
+          </div>
+          <button class="pe-photo-btn" id="pe-change">Change photo</button>
+          <button class="pe-photo-btn pe-photo-remove ${avatarUrl ? '' : 'hidden'}" id="pe-remove">Remove</button>
+          <input type="file" id="pe-file" accept="image/*" hidden />
+        </div>
         <div class="field"><label>Display name</label><input id="pe-name" maxlength="40" value="${escapeHtml(state.me.displayName)}"></div>
         <div class="field"><label>Username</label><input id="pe-username" maxlength="20" value="${escapeHtml(state.me.username)}"></div>
         <div id="pe-err" class="auth-error"></div>
@@ -1391,16 +1464,59 @@
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
     overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
-    overlay.querySelector('#pe-save').addEventListener('click', async () => {
-      const displayName = overlay.querySelector('#pe-name').value.trim();
-      const username = overlay.querySelector('#pe-username').value.trim();
-      const errBox = overlay.querySelector('#pe-err');
-      const saveBtn = overlay.querySelector('#pe-save');
+
+    const wrap = overlay.querySelector('#pe-avatar-wrap');
+    const fileInput = overlay.querySelector('#pe-file');
+    const removeBtn = overlay.querySelector('#pe-remove');
+    const errBox = overlay.querySelector('#pe-err');
+    const saveBtn = overlay.querySelector('#pe-save');
+
+    const repaint = () => {
+      wrap.innerHTML = `${avatarHtml({ ...state.me, avatarUrl }, { cls: 'pe-avatar' })}<span class="pe-cam">${IC.camera}</span>`;
+      removeBtn.classList.toggle('hidden', !avatarUrl);
+    };
+
+    const pick = () => fileInput.click();
+    overlay.querySelector('#pe-change').addEventListener('click', pick);
+    wrap.addEventListener('click', pick);
+    removeBtn.addEventListener('click', () => { avatarUrl = null; repaint(); });
+
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      errBox.classList.remove('show');
+      wrap.classList.add('uploading');
       saveBtn.disabled = true;
       try {
-        const { user } = await api('/api/me/update', { method: 'POST', body: { displayName, username } });
+        const img = await compressImage(file);
+        const fd = new FormData();
+        fd.append('file', img);
+        fd.append('kind', 'avatar');
+        const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+        avatarUrl = data.url;
+        repaint();
+      } catch (e2) {
+        errBox.textContent = e2.message || 'Upload failed';
+        errBox.classList.add('error', 'show');
+      } finally {
+        wrap.classList.remove('uploading');
+        saveBtn.disabled = false;
+      }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      const displayName = overlay.querySelector('#pe-name').value.trim();
+      const username = overlay.querySelector('#pe-username').value.trim();
+      saveBtn.disabled = true;
+      try {
+        const { user } = await api('/api/me/update', {
+          method: 'POST',
+          body: { displayName, username, avatarUrl },
+        });
         state.me = user;
         renderMeHeader();
+        renderChats();
         if (state.current) renderMessages();
         close();
         toast('✅', 'Saved', 'Profile updated');
@@ -1486,6 +1602,8 @@
     send: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
     user: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
     logout: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+    check: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];

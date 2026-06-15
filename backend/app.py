@@ -249,7 +249,11 @@ def update_me():
         return jsonify(error="Username must be 3-20 characters (letters, numbers, _ or . only)."), 400
     if username != g.user["username"] and db.username_exists(username):
         return jsonify(error="That username is already taken."), 409
-    user = db.update_user(me_id, display_name, username)
+    user = db.update_user(
+        me_id, display_name, username,
+        avatar_url=data.get("avatarUrl"),
+        set_avatar=("avatarUrl" in data),
+    )
     return jsonify(user=user)
 
 
@@ -411,8 +415,11 @@ def upload():
     f = request.files.get("file")
     if not f:
         return jsonify(error="No file uploaded."), 400
+    # Avatars go to a permanent sub-folder so the privacy auto-clear (which only
+    # sweeps the bucket root) never deletes them.
+    prefix = "avatars" if request.form.get("kind") == "avatar" else ""
     try:
-        info = storage.save_file(f)
+        info = storage.save_file(f, prefix=prefix)
     except storage.TooLarge:
         return jsonify(error="File is too large (max 50 MB)."), 400
     except Exception:

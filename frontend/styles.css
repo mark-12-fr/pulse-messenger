@@ -272,6 +272,12 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 }
 .avatar.sm { width: 36px; height: 36px; min-width: 36px; font-size: 14px; }
 .avatar.lg { width: 46px; height: 46px; min-width: 46px; }
+.avatar .av-img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
 .avatar .dot {
   position: absolute;
   right: -1px; bottom: -1px;
@@ -741,6 +747,36 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .modal-card h3 { margin: 0 0 16px; font-size: 19px; font-weight: 750; }
 .modal-actions { display: flex; gap: 10px; margin-top: 8px; }
 .modal-actions .btn-soft, .modal-actions .btn-primary { flex: 1; padding: 12px; border-radius: 12px; text-align: center; }
+
+/* ===== profile photo editor ===== */
+.pe-photo { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 18px; }
+.pe-avatar-wrap { position: relative; cursor: pointer; border-radius: 50%; transition: transform .18s var(--ease); }
+.pe-avatar-wrap:active { transform: scale(.96); }
+.pe-avatar-wrap .avatar.pe-avatar { width: 92px; height: 92px; min-width: 92px; font-size: 32px; box-shadow: 0 6px 20px rgba(0,0,0,.22); }
+.pe-avatar-wrap .pe-cam {
+  position: absolute; right: -2px; bottom: -2px;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-grad); color: #fff;
+  border: 3px solid var(--panel);
+  box-shadow: 0 2px 6px rgba(0,0,0,.2);
+}
+.pe-avatar-wrap.uploading { opacity: .55; pointer-events: none; animation: pulseSoft 1s ease-in-out infinite; }
+@keyframes pulseSoft { 50% { opacity: .3; } }
+.pe-photo-btn { background: none; border: none; color: var(--accent); font-weight: 700; font-size: 14px; padding: 4px 8px; cursor: pointer; }
+.pe-photo-btn.pe-photo-remove { color: var(--danger); }
+
+/* ===== forward picker ===== */
+.fwd-list { background: var(--elev); border: 1px solid var(--line); border-radius: 18px; overflow-y: auto; max-height: min(46vh, 360px); box-shadow: var(--shadow); }
+.fwd-row { display: flex; align-items: center; gap: 12px; width: 100%; border: none; background: transparent; color: var(--text); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); transition: background .15s; cursor: pointer; }
+.fwd-row:last-child { border-bottom: none; }
+.fwd-row:active { background: var(--hover); }
+.fwd-name { flex: 1; min-width: 0; font-weight: 650; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fwd-check { width: 24px; height: 24px; min-width: 24px; border-radius: 50%; border: 2px solid var(--line); color: #fff; display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(.6); transition: opacity .15s var(--ease), transform .15s var(--ease), background .15s; }
+.fwd-row.sel { background: var(--active); }
+.fwd-row.sel .fwd-check { opacity: 1; transform: scale(1); background: var(--accent-grad); border-color: transparent; }
+.mm-act.primary { color: var(--accent); font-weight: 800; }
+.mm-act.primary:disabled { color: var(--text-faint); opacity: .6; }
 
 /* ===== swipe-to-reply · reply quote · reply bar ===== */
 .messages { overflow-x: hidden; }

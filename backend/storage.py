@@ -58,14 +58,22 @@ def _safe_ext(filename):
     return ext[:12]
 
 
-def save_file(file_storage):
-    """file_storage is a Werkzeug FileStorage. Returns a dict the client can use."""
+def save_file(file_storage, prefix=""):
+    """file_storage is a Werkzeug FileStorage. Returns a dict the client can use.
+
+    ``prefix`` puts the file in a sub-folder of the bucket. Files under the
+    ``avatars/`` prefix are kept permanently — the privacy auto-clear job only
+    sweeps the bucket root, so profile photos survive the 3-hour message purge.
+    """
     data = file_storage.read()
     if len(data) > MAX_BYTES:
         raise TooLarge()
 
     mime = file_storage.mimetype or "application/octet-stream"
     key = f"{int(time.time() * 1000)}-{secrets.token_hex(12)}{_safe_ext(file_storage.filename)}"
+    prefix = "".join(c for c in (prefix or "") if c.isalnum() or c in "-_").strip("/")
+    if prefix:
+        key = f"{prefix}/{key}"
 
     if _SUPABASE_READY:
         try:
@@ -103,7 +111,9 @@ def save_file(file_storage):
     # Local fallback (also used for local dev). NOTE: Render's disk is ephemeral,
     # so files saved here disappear when the instance restarts — set
     # SUPABASE_SERVICE_ROLE_KEY for permanent photo storage.
-    with open(os.path.join(LOCAL_DIR, key), "wb") as fp:
+    local_path = os.path.join(LOCAL_DIR, key)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    with open(local_path, "wb") as fp:
         fp.write(data)
     return {
         "url": f"/uploads/{key}",
