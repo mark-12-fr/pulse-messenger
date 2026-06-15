@@ -68,7 +68,7 @@ def public_key():
         return None
 
 
-def send_to_user(user_id, title, body):
+def send_to_user(user_id, title, body, force=False):
     """Send a content-free push to all of a user's devices. Returns diagnostics."""
     result = {"available": _AVAILABLE, "subs": 0, "sent": 0, "failed": 0, "error": None}
     if not _AVAILABLE:
@@ -80,7 +80,7 @@ def send_to_user(user_id, title, body):
     except Exception as e:
         result["error"] = "vapid: " + str(e)[:200]
         return result
-    payload = json.dumps({"title": title, "body": body})
+    payload = json.dumps({"title": title, "body": body, "force": bool(force)})
     try:
         subs = db.get_push_subscriptions(user_id)
     except Exception as e:

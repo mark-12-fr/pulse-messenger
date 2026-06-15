@@ -436,7 +436,7 @@ def push_unsubscribe():
 @app.post("/api/push/test")
 @auth_required
 def push_test():
-    return jsonify(push.send_to_user(g.user["id"], "Tea 🍵", "Test notification — it works!"))
+    return jsonify(push.send_to_user(g.user["id"], "Tea 🍵", "Test notification — it works!", force=True))
 
 
 # ---------------------------------------------------------------------------
@@ -514,11 +514,10 @@ def on_message_send(payload):
 
     emit_to_user(uid, "message:new", envelope)
     emit_to_user(to_user_id, "message:new", envelope)
-    # If the recipient isn't actively connected, send a content-free push so they
-    # see "X sent you a message" in their notification bar even with the app closed.
-    if not is_online(to_user_id):
-        socketio.start_background_task(push.send_to_user, to_user_id,
-                                       sender["displayName"], "Sent you a message")
+    # Always push to the recipient; the service worker only displays it when the
+    # app is NOT in the foreground, so backgrounded/closed devices get notified too.
+    socketio.start_background_task(push.send_to_user, to_user_id,
+                                   sender["displayName"], "Sent you a message")
     return {"ok": True, "message": msg}
 
 

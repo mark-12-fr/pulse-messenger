@@ -8,16 +8,21 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
   const title = data.title || 'Tea';
   const body = data.body || 'New message';
-  event.waitUntil(
-    self.registration.showNotification(title, {
+  event.waitUntil((async () => {
+    if (!data.force) {
+      const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      // app is open AND in the foreground -> the in-app toast handles it; skip
+      if (all.some((c) => c.visibilityState === 'visible')) return;
+    }
+    await self.registration.showNotification(title, {
       body,
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       tag: 'tea-message',
       renotify: true,
       vibrate: [80, 40, 80],
-    })
-  );
+    });
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
