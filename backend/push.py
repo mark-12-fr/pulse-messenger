@@ -95,6 +95,8 @@ def send_to_user(user_id, title, body, force=False):
                 data=payload,
                 vapid_private_key=vapid,
                 vapid_claims={"sub": _VAPID_SUB},
+                ttl=86400,
+                headers={"Urgency": "high"},
                 timeout=10,
             )
             result["sent"] += 1
