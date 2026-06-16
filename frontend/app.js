@@ -889,6 +889,7 @@
     const peer = state.friends.get(peerId);
     if (!peer) return;
     saveDraft(); // keep what was typed in the chat we're leaving
+    if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
     state.current = { conversationId, peer };
     $('#typing-row').classList.remove('show');
@@ -945,6 +946,7 @@
   async function openGroup(cid) {
     const conv = state.conversations.get(cid);
     saveDraft();
+    if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
     state.current = { conversationId: cid, isGroup: true, group: (conv && conv.group) || { id: cid, name: 'Group', members: [] } };
     $('#typing-row').classList.remove('show');
@@ -1920,6 +1922,12 @@
   // LIGHTBOX
   // ============================================================
   $('#messages').addEventListener('click', (e) => {
+    // selection mode: a tap toggles the message
+    if (state.selecting) {
+      const sel = e.target.closest('.msg[data-mid]');
+      if (sel) toggleSelect(sel);
+      return;
+    }
     // tap a reply quote -> jump to the original message
     const jump = e.target.closest('[data-reply-jump]');
     if (jump) { jumpToMessage(Number(jump.dataset.replyJump)); return; }
@@ -2118,6 +2126,7 @@
     if (m && !m.unsent) reactToMessage(m.id, '❤️');
   }
   messagesEl.addEventListener('dblclick', (e) => {
+    if (state.selecting) return;
     const msgEl = e.target.closest('.msg[data-mid]');
     if (msgEl) quickLike(msgEl, e.target);
   });
@@ -2153,6 +2162,7 @@
   function onTouchStart(e) {
     const msgEl = e.target.closest('.msg[data-mid]');
     if (!msgEl) return;
+    if (state.selecting) return; // tap handled by the click listener (toggle)
     const now = Date.now();
     if (lastTapEl === msgEl && now - lastTapTime < 300) {
       // double tap -> quick like
@@ -2281,6 +2291,7 @@
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-pin-msg="1">${state.pinned && state.pinned.id === m.id ? 'Unpin' : 'Pin'}</button>` : ''}
           ${mine && m.body ? `<button class="mm-act" data-edit="1">Edit</button>` : ''}
           ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
+          <button class="mm-act" data-select="1">Select</button>
           ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
@@ -2306,17 +2317,16 @@
         try { navigator.clipboard.writeText(m.body || ''); toast('📋', 'Copied', 'Message copied'); } catch (_) {}
         return close();
       }
+      if (e.target.closest('[data-select]')) { close(); enterSelect(mid); return; }
       if (e.target.closest('[data-cancel]')) return close();
       // backdrop tap — ignore the trailing tap that opened the sheet
       if (e.target === overlay && Date.now() - openedAt > 220) close();
     });
   }
 
-  function openForward(m) {
-    const attachment = m.attachmentUrl
-      ? { url: m.attachmentUrl, type: m.attachmentType, name: m.attachmentName }
-      : null;
-    const body = m.body || '';
+  function openForward(input) {
+    const msgs = (Array.isArray(input) ? input : [input]).filter((m) => m && !m.unsent);
+    if (!msgs.length) return;
     const friends = Array.from(state.friends.values()).sort((a, b) =>
       a.displayName.localeCompare(b.displayName)
     );
@@ -2358,12 +2368,17 @@
       if (e.target.closest('#fwd-send')) {
         if (!selected.size || !state.socket) return;
         selected.forEach((toUserId) => {
-          state.socket.emit('message:send', { toUserId, body, attachment, replyToId: null }, (resp) => {
-            if (resp && resp.error) toast('⚠️', 'Not forwarded', resp.error);
+          msgs.forEach((mm) => {
+            const attachment = mm.attachmentUrl
+              ? { url: mm.attachmentUrl, type: mm.attachmentType, name: mm.attachmentName } : null;
+            state.socket.emit('message:send', { toUserId, body: mm.body || '', attachment, replyToId: null }, (resp) => {
+              if (resp && resp.error) toast('⚠️', 'Not forwarded', resp.error);
+            });
           });
         });
         close();
-        toast('↪️', 'Forwarded', selected.size > 1 ? `Sent to ${selected.size} chats` : 'Message forwarded');
+        if (state.selecting) exitSelect();
+        toast('↪️', 'Forwarded', selected.size > 1 ? `Sent to ${selected.size} chats` : 'Forwarded');
         return;
       }
       if (e.target.closest('[data-cancel]')) return close();
@@ -2444,6 +2459,64 @@
       renderPinnedBanner(payload.message);
     }
   }
+
+  // ---------- multi-select ----------
+  function enterSelect(firstId) {
+    state.selecting = true;
+    state.selected = new Set();
+    if (firstId) state.selected.add(firstId);
+    messagesEl.classList.add('selecting');
+    document.getElementById('chat-active').classList.add('selecting');
+    document.getElementById('select-bar').classList.remove('hidden');
+    messagesEl.querySelectorAll('.msg[data-mid]').forEach((el) =>
+      el.classList.toggle('selected', state.selected.has(Number(el.dataset.mid))));
+    updateSelectBar();
+  }
+  function exitSelect() {
+    state.selecting = false;
+    state.selected = new Set();
+    messagesEl.classList.remove('selecting');
+    const ca = document.getElementById('chat-active'); if (ca) ca.classList.remove('selecting');
+    const bar = document.getElementById('select-bar'); if (bar) bar.classList.add('hidden');
+    messagesEl.querySelectorAll('.msg.selected').forEach((el) => el.classList.remove('selected'));
+  }
+  function toggleSelect(msgEl) {
+    const id = Number(msgEl.dataset.mid);
+    const m = state.messages.find((x) => x.id === id);
+    if (!m || m.unsent) return;
+    if (state.selected.has(id)) { state.selected.delete(id); msgEl.classList.remove('selected'); }
+    else { state.selected.add(id); msgEl.classList.add('selected'); }
+    if (state.selected.size === 0) return exitSelect();
+    updateSelectBar();
+  }
+  function updateSelectBar() {
+    const n = state.selected ? state.selected.size : 0;
+    const cnt = document.getElementById('sel-count');
+    if (cnt) cnt.textContent = n + ' selected';
+    const allMine = [...state.selected].every((id) => {
+      const m = state.messages.find((x) => x.id === id);
+      return m && m.senderId === state.me.id;
+    });
+    const del = document.getElementById('sel-delete');
+    if (del) del.classList.toggle('hidden', !allMine || n === 0);
+  }
+  function selectedMessages() {
+    return [...(state.selected || [])].map((id) => state.messages.find((x) => x.id === id)).filter(Boolean);
+  }
+  (function () {
+    const cancel = document.getElementById('sel-cancel');
+    const fwd = document.getElementById('sel-forward');
+    const del = document.getElementById('sel-delete');
+    if (cancel) cancel.addEventListener('click', exitSelect);
+    if (fwd) fwd.addEventListener('click', () => { const msgs = selectedMessages(); if (msgs.length) openForward(msgs); });
+    if (del) del.addEventListener('click', () => {
+      [...state.selected].forEach((id) => {
+        const m = state.messages.find((x) => x.id === id);
+        if (m && m.senderId === state.me.id) unsendMessage(id);
+      });
+      exitSelect();
+    });
+  })();
 
   function onMessageReaction(payload) {
     const m = state.messages.find((x) => x.id === payload.messageId);

@@ -179,6 +179,15 @@
 
         <div class="mention-pop hidden" id="mention-pop"></div>
 
+        <div class="select-bar hidden" id="select-bar">
+          <button class="icon-btn" id="sel-cancel" aria-label="Cancel selection">✕</button>
+          <span class="sel-count" id="sel-count">0 selected</span>
+          <div class="sel-actions">
+            <button class="sel-act" id="sel-forward">Forward</button>
+            <button class="sel-act danger" id="sel-delete">Delete</button>
+          </div>
+        </div>
+
         <div class="composer">
           <input type="file" id="file-input" hidden multiple accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip" />
           <input type="file" id="camera-input" hidden accept="image/*" capture="environment" />
