@@ -46,6 +46,25 @@
   // Subtle haptic feedback (mobile only; no-op where unsupported).
   function haptic(ms = 12) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
+  // Lightweight WhatsApp-style formatting on already-escaped text + clickable links.
+  function fmtInline(s) {
+    return s
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/(^|\s)\*(\S(?:[^*\n]*\S)?)\*(?=\s|$|[.,!?;:])/g, '$1<strong>$2</strong>')
+      .replace(/(^|\s)_(\S(?:[^_\n]*\S)?)_(?=\s|$|[.,!?;:])/g, '$1<em>$2</em>')
+      .replace(/(^|\s)~(\S(?:[^~\n]*\S)?)~(?=\s|$|[.,!?;:])/g, '$1<del>$2</del>');
+  }
+  function formatText(escaped) {
+    const urlRe = /(https?:\/\/[^\s<]+)/g;
+    let out = '', last = 0, m;
+    while ((m = urlRe.exec(escaped))) {
+      out += fmtInline(escaped.slice(last, m.index));
+      out += `<a href="${m[0]}" target="_blank" rel="noopener" class="msg-link">${m[0]}</a>`;
+      last = m.index + m[0].length;
+    }
+    return out + fmtInline(escaped.slice(last));
+  }
+
   function avatarHtml(user, opts = {}) {
     const cls = opts.cls || '';
     const color = user.avatarColor || '#0084ff';
@@ -864,6 +883,7 @@
   async function openConversation(conversationId, peerId) {
     const peer = state.friends.get(peerId);
     if (!peer) return;
+    saveDraft(); // keep what was typed in the chat we're leaving
     if (recState) cancelVoiceRecording();
     state.current = { conversationId, peer };
     $('#typing-row').classList.remove('show');
@@ -871,9 +891,7 @@
     clearAttachment();
     cancelReply();
     cancelEdit();
-    msgInput.value = '';
-    msgInput.style.height = 'auto';
-    refreshSendState();
+    restoreDraft(conversationId);
     setComposerBlocked(peer); // reset to cached state; refreshed after messages load
 
     $('#chat-empty').classList.add('hidden');
@@ -919,6 +937,7 @@
 
   async function openGroup(cid) {
     const conv = state.conversations.get(cid);
+    saveDraft();
     if (recState) cancelVoiceRecording();
     state.current = { conversationId: cid, isGroup: true, group: (conv && conv.group) || { id: cid, name: 'Group', members: [] } };
     $('#typing-row').classList.remove('show');
@@ -926,9 +945,7 @@
     clearAttachment();
     cancelReply();
     cancelEdit();
-    msgInput.value = '';
-    msgInput.style.height = 'auto';
-    refreshSendState();
+    restoreDraft(cid);
     setComposerBlocked(null); // groups can't be blocked — make sure composer shows
 
     $('#chat-empty').classList.add('hidden');
@@ -1164,18 +1181,18 @@
     const rx = reactionsHtml(m);
     let inner;
     if (m.attachmentType === 'image') {
-      const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
+      const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble media"><img src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="image" alt="image" loading="lazy">${cap}</div>`;
     } else if (m.attachmentType === 'video') {
-      const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
+      const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble media"><video src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="video" controls preload="metadata"></video>${cap}</div>`;
     } else if (m.attachmentType === 'audio') {
       inner = `<div class="bubble voice">${voicePlayerHtml(m)}</div>`;
     } else if (m.attachmentType === 'file') {
-      const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
+      const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
     } else {
-      inner = `<div class="bubble">${escapeHtml(m.body)}</div>`;
+      inner = `<div class="bubble">${formatText(escapeHtml(m.body))}</div>`;
     }
     return `<div class="bwrap">${senderLabel}${replyQuoteHtml(m)}${inner}${rx}${t}</div>`;
   }
@@ -1212,6 +1229,22 @@
       sendBtn.title = micMode ? 'Record voice message' : 'Send';
     }
     sendBtn.disabled = micMode ? false : !hasContent;
+  }
+
+  // Per-conversation drafts (in-memory; never persisted — privacy).
+  function saveDraft() {
+    if (!state.current) return;
+    state.drafts = state.drafts || {};
+    const v = msgInput.value;
+    if (v && v.trim()) state.drafts[state.current.conversationId] = v;
+    else delete state.drafts[state.current.conversationId];
+  }
+  function restoreDraft(id) {
+    state.drafts = state.drafts || {};
+    msgInput.value = state.drafts[id] || '';
+    msgInput.style.height = 'auto';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+    refreshSendState();
   }
 
   msgInput.addEventListener('input', () => {
@@ -1297,6 +1330,7 @@
 
     msgInput.value = '';
     msgInput.style.height = 'auto';
+    saveDraft(); // composer is empty now → clears this chat's draft
     clearAttachment();
     cancelReply();
     refreshSendState();
