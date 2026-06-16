@@ -43,6 +43,9 @@
   // A friend's display name, overridden by the user's private nickname if set.
   const friendName = (f) => (f && (f.nickname || f.displayName)) || '';
 
+  // Subtle haptic feedback (mobile only; no-op where unsupported).
+  function haptic(ms = 12) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+
   function avatarHtml(user, opts = {}) {
     const cls = opts.cls || '';
     const color = user.avatarColor || '#0084ff';
@@ -279,6 +282,50 @@
     });
   }
 
+  function openInvite() {
+    if (!state.me) return;
+    const link = location.origin + '/?add=' + encodeURIComponent(state.me.username);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card invite-card">
+        <h3>Invite a friend</h3>
+        <p class="confirm-text">Scan the code or share your link — they can add you on Tea in one tap.</p>
+        <div class="invite-qr" id="invite-qr"></div>
+        <div class="invite-link" id="invite-link">${escapeHtml(link)}</div>
+        <div class="modal-actions">
+          <button class="btn-soft" id="invite-copy">Copy link</button>
+          <button class="btn-primary" id="invite-share">Share</button>
+        </div>
+        <button class="mm-act" data-cancel="1" style="margin-top:10px">Close</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    try {
+      if (window.qrcode) {
+        const qr = window.qrcode(0, 'M');
+        qr.addData(link); qr.make();
+        overlay.querySelector('#invite-qr').innerHTML = qr.createImgTag(5, 12);
+      } else { overlay.querySelector('#invite-qr').remove(); }
+    } catch (e) { const q = overlay.querySelector('#invite-qr'); if (q) q.remove(); }
+    overlay.addEventListener('click', async (e) => {
+      if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('#invite-copy')) {
+        try { await navigator.clipboard.writeText(link); toast('✅', 'Copied', 'Invite link copied'); }
+        catch (_) { toast('⚠️', 'Copy this link', link); }
+        return;
+      }
+      if (e.target.closest('#invite-share')) {
+        try {
+          if (navigator.share) await navigator.share({ title: 'Tea 🍵', text: 'Add me on Tea', url: link });
+          else { await navigator.clipboard.writeText(link); toast('✅', 'Copied', 'Invite link copied'); }
+        } catch (_) {}
+        return;
+      }
+    });
+  }
+
   function confirmLogoutOthers() {
     const overlay = document.createElement('div');
     overlay.className = 'modal';
@@ -348,6 +395,12 @@
     renderAll();
     conversationsReady = true;
     if (pendingOpenConv) { openConversationById(pendingOpenConv); pendingOpenConv = null; }
+    if (pendingAdd) {
+      const u = pendingAdd; pendingAdd = null;
+      searchInput.value = u;
+      $('#search-clear').classList.remove('hidden');
+      doSearch(u);
+    }
   }
 
   function showChatsSkeleton() {
@@ -606,6 +659,28 @@
     );
   }
 
+  // Swipe left/right across the list to switch tabs.
+  (function () {
+    const scroller = document.querySelector('.list-scroll');
+    if (!scroller) return;
+    const TABS = ['chats', 'friends', 'requests'];
+    let sx = 0, sy = 0, tracking = false;
+    scroller.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { tracking = false; return; }
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
+    }, { passive: true });
+    scroller.addEventListener('touchend', (e) => {
+      if (!tracking) return; tracking = false;
+      if (!$('#search-results').classList.contains('hidden')) return; // searching
+      const t = e.changedTouches[0];
+      const dx = t.clientX - sx, dy = t.clientY - sy;
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      const cur = TABS.indexOf(state.activeTab || 'chats');
+      const next = Math.max(0, Math.min(TABS.length - 1, cur + (dx < 0 ? 1 : -1)));
+      if (next !== cur) { haptic(10); const btn = document.querySelector(`.tab[data-tab="${TABS[next]}"]`); if (btn) btn.click(); }
+    }, { passive: true });
+  })();
+
   // ============================================================
   // SEARCH + ADD FRIEND
   // ============================================================
@@ -742,6 +817,7 @@
   // Deep-link: open a conversation by id (used by notification taps). If the
   // chat list hasn't loaded yet, remember it and open once it has.
   let pendingOpenConv = null;
+  let pendingAdd = null;
   let conversationsReady = false;
   function openConversationById(cid) {
     const c = state.conversations.get(cid);
@@ -1954,7 +2030,7 @@
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
       pressTimer = null;
-      if (touchState && !touchState.swiping) openMsgMenu(msgEl);
+      if (touchState && !touchState.swiping) { haptic(18); openMsgMenu(msgEl); }
     }, 480);
   }
   function onTouchMove(e) {
@@ -1983,7 +2059,7 @@
     el.style.transform = '';
     if (armed) {
       const m = state.messages.find((x) => x.id === Number(el.dataset.mid));
-      if (m && !m.unsent) startReply(m);
+      if (m && !m.unsent) { haptic(15); startReply(m); }
     }
     touchState = null;
   }
@@ -2177,6 +2253,7 @@
 
   function reactToMessage(mid, emoji) {
     if (!state.socket) return;
+    haptic();
     state.socket.emit('message:react', { messageId: mid, emoji }, (resp) => {
       if (resp && resp.error) toast('⚠️', 'Could not react', resp.error);
     });
@@ -2873,6 +2950,7 @@
     error: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg>',
     lock: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
     devices: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="13" height="10" rx="2"/><path d="M2 18h13"/><rect x="17" y="8" width="5" height="12" rx="1.5"/></svg>',
+    share: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5 8.6 10.5"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
@@ -3024,6 +3102,7 @@
         <div class="set-section set-list">
           <button class="set-row" data-notif="1"><span class="set-main">${IC.bell}<span>Notifications</span></span><span class="set-state" id="set-notif">…</span></button>
           <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
+          <button class="set-row" data-invite="1"><span class="set-main">${IC.share}<span>Invite a friend</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-password="1"><span class="set-main">${IC.lock}<span>Change password</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-logout-others="1"><span class="set-main">${IC.devices}<span>Log out other devices</span></span><span class="set-state">›</span></button>
           <button class="set-row danger" data-logout="1"><span class="set-main">${IC.logout}<span>Log out</span></span></button>
@@ -3065,6 +3144,7 @@
         return;
       }
       if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }
+      if (e.target.closest('[data-invite]')) { close(); openInvite(); return; }
       if (e.target.closest('[data-password]')) { close(); openChangePassword(); return; }
       if (e.target.closest('[data-logout-others]')) { close(); confirmLogoutOthers(); return; }
       if (e.target.closest('[data-logout]')) { close(); confirmLogout(); return; }
@@ -3098,10 +3178,14 @@
     $('#splash').classList.add('hidden');
   }
 
-  // Notification tap may open the app at /?open=<conversationId>
+  // Deep-links: /?open=<conversationId> (notification tap) · /?add=<username> (invite)
   try {
-    const oc = new URLSearchParams(location.search).get('open');
-    if (oc) { pendingOpenConv = Number(oc); history.replaceState({}, '', location.pathname); }
+    const params = new URLSearchParams(location.search);
+    const oc = params.get('open');
+    const ad = params.get('add');
+    if (oc) pendingOpenConv = Number(oc);
+    if (ad) pendingAdd = String(ad).slice(0, 32);
+    if (oc || ad) history.replaceState({}, '', location.pathname);
   } catch (e) {}
 
   boot();
