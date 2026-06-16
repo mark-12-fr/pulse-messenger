@@ -287,6 +287,8 @@ def friend_request():
         return jsonify(error="Invalid user."), 400
     if not db.get_user_by_id(target_id):
         return jsonify(error="User not found."), 404
+    if db.is_blocked_either(me_id, target_id):
+        return jsonify(error="You can't add this person."), 403
 
     existing = db.find_friendship(me_id, target_id)
     if existing:
@@ -363,6 +365,33 @@ def friend_nickname():
     return jsonify(ok=True, nickname=nickname or None)
 
 
+@app.post("/api/friends/block")
+@auth_required
+def friend_block():
+    data = request.get_json(silent=True) or {}
+    other_id = int(data.get("userId") or 0)
+    me_id = g.user["id"]
+    if not other_id or other_id == me_id:
+        return jsonify(error="Invalid user."), 400
+    db.block_user(me_id, other_id)
+    # let the other side refresh (they can no longer message me)
+    emit_to_user(other_id, "user:blocked", {"userId": me_id})
+    return jsonify(ok=True, blocked=True)
+
+
+@app.post("/api/friends/unblock")
+@auth_required
+def friend_unblock():
+    data = request.get_json(silent=True) or {}
+    other_id = int(data.get("userId") or 0)
+    me_id = g.user["id"]
+    if not other_id:
+        return jsonify(error="Invalid user."), 400
+    db.unblock_user(me_id, other_id)
+    emit_to_user(other_id, "user:unblocked", {"userId": me_id})
+    return jsonify(ok=True, blocked=False)
+
+
 @app.get("/api/friends/requests")
 @auth_required
 def friend_requests():
@@ -379,6 +408,24 @@ def friend_requests():
 @auth_required
 def conversations():
     return jsonify(conversations=db.list_conversations(g.user["id"]))
+
+
+@app.post("/api/conversations/<int:cid>/prefs")
+@auth_required
+def conversation_prefs(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Conversation not found."), 404
+    data = request.get_json(silent=True) or {}
+    pinned = data.get("pinned")
+    muted = data.get("muted")
+    prefs = db.set_conversation_pref(
+        me_id, cid,
+        pinned=bool(pinned) if pinned is not None else None,
+        muted=bool(muted) if muted is not None else None,
+    )
+    return jsonify(ok=True, **prefs)
 
 
 @app.get("/api/conversations/<int:cid>/messages")
@@ -401,7 +448,9 @@ def conversation_messages(cid):
 
     return jsonify(
         messages=messages,
-        friend={**partner, "online": is_online(partner_id)},
+        friend={**partner, "online": is_online(partner_id),
+                "iBlocked": db.i_blocked(me_id, partner_id),
+                "blockedMe": db.i_blocked(partner_id, me_id)},
         partnerLastRead=db.get_last_read(cid, partner_id),
     )
 
@@ -542,6 +591,8 @@ def on_message_send(payload):
     fr = db.find_friendship(uid, to_user_id)
     if not fr or fr["status"] != "accepted":
         return {"error": "You can only message your friends."}
+    if db.is_blocked_either(uid, to_user_id):
+        return {"error": "You can't message this person."}
 
     conv = db.get_or_create_conversation(uid, to_user_id)
     if reply_to_id:
@@ -566,7 +617,7 @@ def on_message_send(payload):
     # Push only when the recipient isn't actively using the app in the foreground.
     # They still get notified when backgrounded, at the home screen, or phone closed
     # (iPhone or Android) — but never pinged mid-conversation.
-    if not is_active(to_user_id):
+    if not is_active(to_user_id) and not db.is_muted(to_user_id, conv["id"]):
         socketio.start_background_task(push.send_to_user, to_user_id,
                                        sender["displayName"], "Sent you a message")
     return {"ok": True, "message": msg}

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    create_engine, select, or_, func,
+    create_engine, select, or_, and_, func, delete,
     Integer, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, Index,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, mapped_column
@@ -153,6 +153,25 @@ class FriendNickname(Base):
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     friend_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     nickname = mapped_column(Text, nullable=False)
+
+
+class ConversationPref(Base):
+    __tablename__ = "conversation_prefs"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    conversation_id = mapped_column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    pinned = mapped_column(Boolean, nullable=False, default=False)
+    muted = mapped_column(Boolean, nullable=False, default=False)
+    __table_args__ = (UniqueConstraint("user_id", "conversation_id", name="uq_conv_pref"),)
+
+
+class Block(Base):
+    __tablename__ = "blocks"
+    id = mapped_column(Integer, primary_key=True)
+    blocker_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    blocked_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("blocker_id", "blocked_id", name="uq_block_pair"),)
 
 
 def init_db():
@@ -631,6 +650,13 @@ def list_conversations(me_id):
             select(Conversation).where(or_(Conversation.user_a == me_id, Conversation.user_b == me_id))
         ).scalars().all()
         conv_dicts = [_conv_dict(c) for c in convs]
+        prefs = {
+            p.conversation_id: p
+            for p in s.execute(
+                select(ConversationPref).where(ConversationPref.user_id == me_id)
+            ).scalars().all()
+        }
+        prefs = {cid: {"pinned": bool(p.pinned), "muted": bool(p.muted)} for cid, p in prefs.items()}
 
     result = []
     for conv in conv_dicts:
@@ -639,14 +665,107 @@ def list_conversations(me_id):
         last = get_last_message(conv["id"])
         if not last:
             continue  # hide empty conversations
+        pref = prefs.get(conv["id"], {})
         result.append({
             "id": conv["id"],
             "friend": partner,
             "lastMessage": last,
             "unread": unread_count(conv["id"], me_id),
+            "pinned": bool(pref.get("pinned")),
+            "muted": bool(pref.get("muted")),
         })
-    result.sort(key=lambda x: (x["lastMessage"]["createdAt"] or ""), reverse=True)
+    # pinned conversations float to the top, then most-recent first
+    result.sort(key=lambda x: (x["pinned"], x["lastMessage"]["createdAt"] or ""), reverse=True)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Conversation prefs (pin / mute) & blocking
+# ---------------------------------------------------------------------------
+def _get_or_make_pref(s, user_id, conversation_id):
+    p = s.execute(
+        select(ConversationPref).where(
+            ConversationPref.user_id == user_id,
+            ConversationPref.conversation_id == conversation_id,
+        )
+    ).scalar_one_or_none()
+    if not p:
+        p = ConversationPref(user_id=user_id, conversation_id=conversation_id)
+        s.add(p)
+    return p
+
+
+def set_conversation_pref(user_id, conversation_id, pinned=None, muted=None):
+    """Update pin/mute for one user's view of a conversation. Returns {pinned, muted}."""
+    with session_scope() as s:
+        p = _get_or_make_pref(s, user_id, conversation_id)
+        if pinned is not None:
+            p.pinned = bool(pinned)
+        if muted is not None:
+            p.muted = bool(muted)
+        s.flush()
+        return {"pinned": bool(p.pinned), "muted": bool(p.muted)}
+
+
+def is_muted(user_id, conversation_id):
+    with session_scope() as s:
+        p = s.execute(
+            select(ConversationPref.muted).where(
+                ConversationPref.user_id == user_id,
+                ConversationPref.conversation_id == conversation_id,
+            )
+        ).scalar_one_or_none()
+        return bool(p)
+
+
+def block_user(blocker_id, blocked_id):
+    with session_scope() as s:
+        exists = s.execute(
+            select(Block).where(Block.blocker_id == blocker_id, Block.blocked_id == blocked_id)
+        ).scalar_one_or_none()
+        if not exists:
+            s.add(Block(blocker_id=blocker_id, blocked_id=blocked_id, created_at=now_utc()))
+    return True
+
+
+def unblock_user(blocker_id, blocked_id):
+    with session_scope() as s:
+        s.execute(
+            delete(Block).where(Block.blocker_id == blocker_id, Block.blocked_id == blocked_id)
+        )
+    return True
+
+
+def i_blocked(blocker_id, blocked_id):
+    """True if blocker_id has blocked blocked_id."""
+    with session_scope() as s:
+        row = s.execute(
+            select(Block.id).where(Block.blocker_id == blocker_id, Block.blocked_id == blocked_id)
+        ).scalar_one_or_none()
+        return row is not None
+
+
+def is_blocked_either(a_id, b_id):
+    """True if either user has blocked the other (messaging is disallowed)."""
+    with session_scope() as s:
+        row = s.execute(
+            select(Block.id).where(
+                or_(
+                    and_(Block.blocker_id == a_id, Block.blocked_id == b_id),
+                    and_(Block.blocker_id == b_id, Block.blocked_id == a_id),
+                )
+            )
+        ).first()
+        return row is not None
+
+
+def blocked_ids(me_id):
+    """Set of user ids that me_id has blocked."""
+    with session_scope() as s:
+        rows = s.execute(
+            select(Block.blocked_id).where(Block.blocker_id == me_id)
+        ).scalars().all()
+        return list(rows)
 
 
 # ---------------------------------------------------------------------------

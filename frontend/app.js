@@ -251,6 +251,17 @@
     socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
     socket.on('friend:removed', onFriendRemoved);
+    socket.on('user:blocked', (p) => onPeerBlock(p.userId, true));
+    socket.on('user:unblocked', (p) => onPeerBlock(p.userId, false));
+  }
+
+  // The peer blocked/unblocked me. Track it so my composer reflects reality.
+  function onPeerBlock(userId, blocked) {
+    const f = state.friends.get(userId);
+    if (f) f.blockedMe = blocked;
+    if (state.current && state.current.peer && state.current.peer.id === userId) {
+      state.current.peer.blockedMe = blocked;
+    }
   }
 
   // Tell the server when the app is in the foreground vs backgrounded, so it only
@@ -298,9 +309,10 @@
 
   function renderChats() {
     const box = $('#tab-chats');
-    const convs = Array.from(state.conversations.values()).sort((a, b) =>
-      (b.lastMessage?.createdAt || '').localeCompare(a.lastMessage?.createdAt || '')
-    );
+    const convs = Array.from(state.conversations.values()).sort((a, b) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1; // pinned first
+      return (b.lastMessage?.createdAt || '').localeCompare(a.lastMessage?.createdAt || '');
+    });
     if (!convs.length) {
       box.innerHTML = `<div class="empty-note">No conversations yet.<br>Add a friend and say hi! 👋</div>`;
       return;
@@ -310,16 +322,16 @@
         const f = state.friends.get(c.friend.id) || c.friend;
         const active = state.current && state.current.conversationId === c.id;
         return `
-        <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''}" data-open-conv="${c.id}" data-peer="${f.id}">
+        <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" data-open-conv="${c.id}" data-peer="${f.id}">
           ${avatarHtml(f, { dot: !!f.online })}
           <div class="row-main">
             <div class="row-top">
-              <span class="row-name">${escapeHtml(friendName(f))}</span>
-              <span class="row-time">${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
+              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(friendName(f))}</span>
+              <span class="row-time">${c.muted ? '<span class="row-mute">🔕</span>' : ''}${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
             </div>
             <div class="row-top">
               <span class="row-sub">${escapeHtml(previewText(c.lastMessage))}</span>
-              ${c.unread ? `<span class="row-badge">${c.unread}</span>` : ''}
+              ${c.unread ? `<span class="row-badge ${c.muted ? 'muted' : ''}">${c.unread}</span>` : ''}
             </div>
           </div>
         </div>`;
@@ -564,6 +576,7 @@
     msgInput.value = '';
     msgInput.style.height = 'auto';
     refreshSendState();
+    setComposerBlocked(peer); // reset to cached state; refreshed after messages load
 
     $('#chat-empty').classList.add('hidden');
     $('#chat-active').classList.remove('hidden');
@@ -583,9 +596,13 @@
       const data = await api('/api/conversations/' + conversationId + '/messages');
       state.messages = data.messages;
       state.partnerLastRead = data.partnerLastRead || 0;
-      // refresh peer online from server response
-      Object.assign(peer, { online: data.friend.online, lastSeen: data.friend.lastSeen });
+      // refresh peer online + block state from server response
+      Object.assign(peer, {
+        online: data.friend.online, lastSeen: data.friend.lastSeen,
+        iBlocked: !!data.friend.iBlocked, blockedMe: !!data.friend.blockedMe,
+      });
       updatePeerStatus();
+      setComposerBlocked(peer);
       renderMessages();
 
       // clear unread locally
@@ -945,7 +962,7 @@
       }
     } else if (!isMine) {
       conv.unread = (conv.unread || 0) + 1;
-      toast('💬', friendName(friend), previewText(msg), () => openConversation(convId, friend.id));
+      if (!conv.muted) toast('💬', friendName(friend), previewText(msg), () => openConversation(convId, friend.id));
     }
 
     renderChats();
@@ -1360,13 +1377,17 @@
     if (!state.current) return;
     const peer = state.current.peer;
     const cid = state.current.conversationId;
+    const conv = state.conversations.get(cid) || {};
     const overlay = document.createElement('div');
     overlay.className = 'msg-menu';
     overlay.innerHTML = `
       <div class="mm-sheet">
         <div class="mm-actions">
+          <button class="mm-act" data-pin="1">${conv.pinned ? '📍 Unpin' : '📌 Pin'} conversation</button>
+          <button class="mm-act" data-mute="1">${conv.muted ? '🔔 Unmute' : '🔕 Mute'} notifications</button>
           <button class="mm-act" data-rename="1">Rename</button>
           <button class="mm-act" data-delconv="1">Delete conversation</button>
+          <button class="mm-act ${peer.iBlocked ? '' : 'danger'}" data-block="1">${peer.iBlocked ? 'Unblock' : 'Block'} ${escapeHtml(friendName(peer))}</button>
           <button class="mm-act danger" data-unfriend="1">Unfriend ${escapeHtml(friendName(peer))}</button>
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
@@ -1375,11 +1396,60 @@
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
     overlay.addEventListener('click', (e) => {
+      if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
+      if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
       if (e.target.closest('[data-rename]')) { close(); openRenameFriend(peer); return; }
       if (e.target.closest('[data-delconv]')) { close(); if (confirm('Delete this conversation for both of you?')) deleteConversation(cid); return; }
+      if (e.target.closest('[data-block]')) { close(); toggleBlock(peer, !peer.iBlocked); return; }
       if (e.target.closest('[data-unfriend]')) { close(); if (confirm('Unfriend ' + friendName(peer) + '?')) unfriend(peer.id); return; }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
     });
+  }
+
+  async function toggleConvPref(cid, key, value) {
+    const conv = state.conversations.get(cid);
+    try {
+      const r = await api('/api/conversations/' + cid + '/prefs', { method: 'POST', body: { [key]: value } });
+      if (conv) { conv.pinned = r.pinned; conv.muted = r.muted; }
+      renderChats();
+      if (key === 'pinned') toast(r.pinned ? '📌' : '📍', r.pinned ? 'Pinned' : 'Unpinned', r.pinned ? 'Kept at the top' : 'Removed from top');
+      else toast(r.muted ? '🔕' : '🔔', r.muted ? 'Muted' : 'Unmuted', r.muted ? "You won't be notified" : 'Notifications on');
+    } catch (e) { toast('⚠️', 'Error', e.message); }
+  }
+
+  async function toggleBlock(peer, shouldBlock) {
+    if (shouldBlock && !confirm('Block ' + friendName(peer) + '? They will not be able to message you.')) return;
+    try {
+      await api(shouldBlock ? '/api/friends/block' : '/api/friends/unblock', { method: 'POST', body: { userId: peer.id } });
+      peer.iBlocked = shouldBlock;
+      const f = state.friends.get(peer.id);
+      if (f) f.iBlocked = shouldBlock;
+      setComposerBlocked(peer);
+      toast(shouldBlock ? '🚫' : '✅', shouldBlock ? 'Blocked' : 'Unblocked',
+            shouldBlock ? 'They can no longer message you' : 'You can message each other again');
+    } catch (e) { toast('⚠️', 'Error', e.message); }
+  }
+
+  function setComposerBlocked(peer) {
+    const composer = document.querySelector('.composer');
+    if (!composer) return;
+    let bar = document.getElementById('block-bar');
+    const blocked = peer && peer.iBlocked;
+    if (blocked) {
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'block-bar';
+        bar.className = 'block-bar';
+        composer.parentNode.insertBefore(bar, composer);
+      }
+      bar.innerHTML = `<span>🚫 You blocked this person.</span><button class="block-unbtn">Unblock</button>`;
+      bar.classList.remove('hidden');
+      composer.classList.add('hidden');
+      bar.querySelector('.block-unbtn').onclick = () => toggleBlock(peer, false);
+    } else {
+      if (bar) bar.classList.add('hidden');
+      composer.classList.remove('hidden');
+    }
   }
 
   function openRenameFriend(peer) {
