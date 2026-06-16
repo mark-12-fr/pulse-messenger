@@ -139,14 +139,10 @@
     const f = $('#auth-form');
     if (f) { f.classList.remove('mode-anim'); void f.offsetWidth; f.classList.add('mode-anim'); }
   }
+  // Auth feedback shows as a top-right toast (outside the card), auto-dismiss 3s.
   function showAuthMsg(msg, type = 'error') {
-    const box = $('#auth-error');
-    box.classList.remove('show', 'error', 'success');
-    box.textContent = msg || '';
     if (!msg) return;
-    box.classList.add(type);
-    void box.offsetWidth; // restart the entrance animation
-    box.classList.add('show');
+    toast(type === 'success' ? '✅' : '⚠️', msg, '');
   }
   function showAuthError(msg) { showAuthMsg(msg, 'error'); }
 
@@ -177,8 +173,7 @@
       state.token = data.token;
       localStorage.setItem('pulse_token', data.token);
       state.me = data.user;
-      showAuthMsg(mode === 'register' ? 'Account created 🎉' : 'Welcome back 🎉', 'success');
-      await new Promise((r) => setTimeout(r, 420));
+      showAuthMsg(mode === 'register' ? 'Account created!' : 'Welcome back!', 'success');
       await enterApp();
     } catch (err) {
       showAuthError(err.message);
