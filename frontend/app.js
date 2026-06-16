@@ -1849,8 +1849,8 @@
     overlay.innerHTML = `
       <div class="mm-sheet">
         <div class="mm-actions">
-          <button class="mm-act" data-pin="1">${conv.pinned ? '📍 Unpin' : '📌 Pin'} conversation</button>
-          <button class="mm-act" data-mute="1">${conv.muted ? '🔔 Unmute' : '🔕 Mute'} notifications</button>
+          <button class="mm-act" data-pin="1">${conv.pinned ? 'Unpin' : 'Pin'} conversation</button>
+          <button class="mm-act" data-mute="1">${conv.muted ? 'Unmute' : 'Mute'} notifications</button>
           <button class="mm-act" data-rename="1">Rename</button>
           <button class="mm-act" data-delconv="1">Delete conversation</button>
           <button class="mm-act ${peer.iBlocked ? '' : 'danger'}" data-block="1">${peer.iBlocked ? 'Unblock' : 'Block'} ${escapeHtml(friendName(peer))}</button>
@@ -1882,8 +1882,8 @@
     overlay.innerHTML = `
       <div class="mm-sheet">
         <div class="mm-actions">
-          <button class="mm-act" data-pin="1">${conv.pinned ? '📍 Unpin' : '📌 Pin'} conversation</button>
-          <button class="mm-act" data-mute="1">${conv.muted ? '🔔 Unmute' : '🔕 Mute'} notifications</button>
+          <button class="mm-act" data-pin="1">${conv.pinned ? 'Unpin' : 'Pin'} conversation</button>
+          <button class="mm-act" data-mute="1">${conv.muted ? 'Unmute' : 'Mute'} notifications</button>
           <button class="mm-act" data-members="1">View members (${n})</button>
           <button class="mm-act" data-rename="1">Rename group</button>
           <button class="mm-act" data-photo="1">Change group photo</button>
