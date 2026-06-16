@@ -1452,6 +1452,75 @@
     }
   }
 
+  // ---------- in-chat message search ----------
+  const chatSearchBtn = document.getElementById('chat-search-btn');
+  if (chatSearchBtn) chatSearchBtn.addEventListener('click', openChatSearch);
+
+  function searchSnippet(body, q) {
+    const text = body || '';
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx < 0) return escapeHtml(text.slice(0, 64));
+    const start = Math.max(0, idx - 24);
+    const pre = (start > 0 ? '…' : '') + text.slice(start, idx);
+    const match = text.slice(idx, idx + q.length);
+    const tail = text.slice(idx + q.length, idx + q.length + 36);
+    const post = tail + (text.length > idx + q.length + 36 ? '…' : '');
+    return escapeHtml(pre) + '<mark>' + escapeHtml(match) + '</mark>' + escapeHtml(post);
+  }
+
+  function flashMessage(mid) {
+    const el = $(`.msg[data-mid="${mid}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('flash');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1700);
+  }
+
+  function openChatSearch() {
+    if (!state.current) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'chat-search-overlay';
+    overlay.innerHTML = `
+      <div class="cs-bar">
+        <svg class="cs-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+        <input id="cs-input" placeholder="Search this chat…" autocomplete="off" />
+        <button class="icon-btn" id="cs-close" aria-label="Close">✕</button>
+      </div>
+      <div class="cs-results" id="cs-results"><div class="cs-hint">Type to search your messages</div></div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const input = overlay.querySelector('#cs-input');
+    const results = overlay.querySelector('#cs-results');
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.querySelector('#cs-close').addEventListener('click', close);
+    overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    setTimeout(() => input.focus(), 90);
+
+    const run = () => {
+      const q = input.value.trim();
+      if (!q) { results.innerHTML = `<div class="cs-hint">Type to search your messages</div>`; return; }
+      const ql = q.toLowerCase();
+      const matches = state.messages.filter((m) => !m.unsent && m.body && m.body.toLowerCase().includes(ql));
+      if (!matches.length) { results.innerHTML = `<div class="cs-hint">No messages found</div>`; return; }
+      results.innerHTML = matches.slice().reverse().map((m) => {
+        const who = m.senderId === state.me.id ? 'You' : friendName(state.current.peer);
+        return `<button class="cs-row" data-mid="${m.id}">
+          <div class="cs-row-top"><span class="cs-who">${escapeHtml(who)}</span><span class="cs-time">${fmtTime(m.createdAt)}</span></div>
+          <div class="cs-snip">${searchSnippet(m.body, q)}</div>
+        </button>`;
+      }).join('');
+    };
+    input.addEventListener('input', run);
+    results.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-mid]');
+      if (!row) return;
+      close();
+      setTimeout(() => flashMessage(Number(row.dataset.mid)), 230);
+    });
+  }
+
   function openRenameFriend(peer) {
     const overlay = document.createElement('div');
     overlay.className = 'modal';

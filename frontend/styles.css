@@ -732,7 +732,40 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .mm-act.danger { color: var(--danger); }
 
 /* ===== chat-header more · unsent tombstone · profile modal ===== */
-.chat-more { margin-left: auto; }
+.chat-search-btn { margin-left: auto; }
+.chat-more { margin-left: 0; }
+
+/* ===== in-chat message search ===== */
+.chat-search-overlay {
+  position: fixed; inset: 0; z-index: 330;
+  display: flex; flex-direction: column;
+  background: rgba(0, 0, 0, 0); opacity: 0;
+  transition: opacity .2s var(--ease), background .2s var(--ease);
+}
+.chat-search-overlay.show { opacity: 1; background: rgba(0, 0, 0, .45); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.cs-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(10px + var(--safe-top)) 14px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  transform: translateY(-14px); transition: transform .24s var(--ease);
+}
+.chat-search-overlay.show .cs-bar { transform: none; }
+.cs-icon { color: var(--text-faint); flex-shrink: 0; }
+#cs-input { flex: 1; border: none; background: transparent; color: var(--text); font-size: 16px; outline: none; padding: 6px 0; }
+.cs-results { flex: 1; overflow-y: auto; padding: 6px; }
+.cs-hint { padding: 32px 20px; text-align: center; color: var(--text-faint); font-size: 14px; }
+.cs-row { display: block; width: 100%; text-align: left; border: none; background: transparent; color: var(--text); padding: 11px 14px; border-radius: 12px; transition: background .14s; cursor: pointer; }
+.cs-row:active { background: var(--hover); }
+.cs-row-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
+.cs-who { font-weight: 700; font-size: 13.5px; color: var(--accent); }
+.cs-time { font-size: 11.5px; color: var(--text-faint); }
+.cs-snip { font-size: 14px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-snip mark { background: var(--accent); color: #fff; border-radius: 4px; padding: 0 2px; }
+.msg.flash .bubble { animation: msgFlash 1.6s var(--ease); }
+@keyframes msgFlash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  20% { box-shadow: 0 0 0 3px var(--accent); }
+}
 .me { cursor: pointer; padding: 5px 8px; margin: -5px -8px; border-radius: 12px; transition: background .15s var(--ease); }
 .me:hover { background: var(--hover); }
 
