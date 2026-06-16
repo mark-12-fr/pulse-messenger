@@ -1282,18 +1282,21 @@
     if (v && v.trim()) state.drafts[state.current.conversationId] = v;
     else delete state.drafts[state.current.conversationId];
   }
+  // Grow the composer to fit its text — but NEVER shrink below one line when
+  // empty (that was clipping the placeholder).
+  function autosizeComposer() {
+    msgInput.style.height = 'auto';
+    if (msgInput.value) msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+  }
   function restoreDraft(id) {
     state.drafts = state.drafts || {};
     msgInput.value = state.drafts[id] || '';
-    msgInput.style.height = 'auto';
-    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+    autosizeComposer();
     refreshSendState();
   }
 
   msgInput.addEventListener('input', () => {
-    // auto-grow
-    msgInput.style.height = 'auto';
-    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+    autosizeComposer();
     refreshSendState();
     emitTyping();
     updateMentionPop();
@@ -2264,8 +2267,7 @@
     $('#reply-bar-text').textContent = msgPreviewShort(m);
     $('#reply-bar').classList.remove('hidden');
     msgInput.value = m.body || '';
-    msgInput.style.height = 'auto';
-    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+    autosizeComposer();
     refreshSendState();
     msgInput.focus();
   }
