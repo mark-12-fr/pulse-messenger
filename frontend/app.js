@@ -207,6 +207,9 @@
       current: null, messages: [], attachment: null,
     });
     clearAppUI();
+    conversationsReady = false;
+    pendingOpenConv = null;
+    try { if ('clearAppBadge' in navigator) navigator.clearAppBadge().catch(() => {}); } catch (e) {}
     document.documentElement.classList.remove('resume');
     $('#splash').classList.add('hidden');
     appScreen.classList.add('hidden');
@@ -274,6 +277,8 @@
     connectSocket();
     await Promise.all([loadFriends(), loadConversations(), loadRequests()]);
     renderAll();
+    conversationsReady = true;
+    if (pendingOpenConv) { openConversationById(pendingOpenConv); pendingOpenConv = null; }
   }
 
   function showChatsSkeleton() {
@@ -402,6 +407,7 @@
   }
 
   function renderChats() {
+    updateAppBadge();
     const box = $('#tab-chats');
     const convs = Array.from(state.conversations.values()).sort((a, b) => {
       if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1; // pinned first
@@ -662,6 +668,32 @@
   function openConversationByPeer(peerId) {
     const f = state.friends.get(peerId);
     if (f) openConversation(f.conversationId, peerId);
+  }
+
+  // Deep-link: open a conversation by id (used by notification taps). If the
+  // chat list hasn't loaded yet, remember it and open once it has.
+  let pendingOpenConv = null;
+  let conversationsReady = false;
+  function openConversationById(cid) {
+    const c = state.conversations.get(cid);
+    if (!c) return false;
+    if (c.isGroup) openGroup(cid);
+    else if (c.friend) openConversation(cid, c.friend.id);
+    return true;
+  }
+  function requestOpenConversation(cid) {
+    if (!cid) return;
+    if (conversationsReady && openConversationById(cid)) return;
+    pendingOpenConv = cid;
+  }
+  function updateAppBadge() {
+    try {
+      if (!('setAppBadge' in navigator)) return;
+      let n = 0;
+      state.conversations.forEach((c) => { n += (c.unread || 0); });
+      if (n > 0) navigator.setAppBadge(n).catch(() => {});
+      else navigator.clearAppBadge().catch(() => {});
+    } catch (e) {}
   }
 
   async function openConversation(conversationId, peerId) {
@@ -2582,6 +2614,11 @@
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
+    // tapping a push notification asks us to open that exact conversation
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      const d = e.data || {};
+      if (d.type === 'tea:open' && d.conversationId) requestOpenConversation(Number(d.conversationId));
+    });
   }
 
   function urlB64ToUint8Array(b64) {
@@ -2784,5 +2821,12 @@
     document.documentElement.classList.remove('resume');
     $('#splash').classList.add('hidden');
   }
+
+  // Notification tap may open the app at /?open=<conversationId>
+  try {
+    const oc = new URLSearchParams(location.search).get('open');
+    if (oc) { pendingOpenConv = Number(oc); history.replaceState({}, '', location.pathname); }
+  } catch (e) {}
+
   boot();
 })();

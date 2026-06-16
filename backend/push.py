@@ -68,8 +68,12 @@ def public_key():
         return None
 
 
-def send_to_user(user_id, title, body, force=False):
-    """Send a content-free push to all of a user's devices. Returns diagnostics."""
+def send_to_user(user_id, title, body, force=False, data=None):
+    """Send a content-free push to all of a user's devices. Returns diagnostics.
+
+    ``data`` may carry routing/badge hints (e.g. conversationId, badge) that the
+    service worker uses to deep-link the tap and set the app-icon unread count.
+    """
     result = {"available": _AVAILABLE, "subs": 0, "sent": 0, "failed": 0, "error": None}
     if not _AVAILABLE:
         result["error"] = "pywebpush not installed on the server"
@@ -80,7 +84,10 @@ def send_to_user(user_id, title, body, force=False):
     except Exception as e:
         result["error"] = "vapid: " + str(e)[:200]
         return result
-    payload = json.dumps({"title": title, "body": body, "force": bool(force)})
+    payload_obj = {"title": title, "body": body, "force": bool(force)}
+    if data:
+        payload_obj.update(data)
+    payload = json.dumps(payload_obj)
     try:
         subs = db.get_push_subscriptions(user_id)
     except Exception as e:

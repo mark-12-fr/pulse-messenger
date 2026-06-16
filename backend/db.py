@@ -841,6 +841,34 @@ def unread_count(conversation_id, user_id):
         return int(n or 0)
 
 
+def total_unread(user_id):
+    """Total unread messages across every conversation the user belongs to
+    (used for the app-icon badge)."""
+    with session_scope() as s:
+        direct_ids = s.execute(
+            select(Conversation.id).where(
+                or_(Conversation.user_a == user_id, Conversation.user_b == user_id)
+            )
+        ).scalars().all()
+        group_ids = s.execute(
+            select(ConversationMember.conversation_id).where(ConversationMember.user_id == user_id)
+        ).scalars().all()
+        conv_ids = list(direct_ids) + list(group_ids)
+        if not conv_ids:
+            return 0
+        mr = aliased(MessageRead)
+        n = s.execute(
+            select(func.count(Message.id))
+            .join(mr, and_(mr.conversation_id == Message.conversation_id, mr.user_id == user_id), isouter=True)
+            .where(
+                Message.conversation_id.in_(conv_ids),
+                Message.sender_id != user_id,
+                Message.id > func.coalesce(mr.last_read_message_id, 0),
+            )
+        ).scalar()
+        return int(n or 0)
+
+
 def list_conversations(me_id):
     # All data is gathered with a handful of batched queries in ONE session
     # (instead of several queries per conversation) so the chat list loads fast.

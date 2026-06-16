@@ -712,6 +712,12 @@ def on_presence_active(payload):
         active_sids.discard(sid)
 
 
+def _push_message(recipient_id, title, body, conversation_id):
+    """Background task: push to one recipient with deep-link + app-badge data."""
+    data = {"conversationId": conversation_id, "badge": db.total_unread(recipient_id)}
+    push.send_to_user(recipient_id, title, body, data=data)
+
+
 @socketio.on("message:send")
 def on_message_send(payload):
     uid = sid_user.get(request.sid)
@@ -776,7 +782,7 @@ def on_message_send(payload):
         if not mid or mid == uid:
             continue
         if not is_active(mid) and not db.is_muted(mid, conv["id"]):
-            socketio.start_background_task(push.send_to_user, mid, title, bodytext[:120])
+            socketio.start_background_task(_push_message, mid, title, bodytext[:120], conv["id"])
     return {"ok": True, "message": msg}
 
 
