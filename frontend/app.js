@@ -1066,6 +1066,7 @@
       newSinceScroll = 0;
     }
     updateScrollBtn();
+    loadLinkPreviews();
   }
 
   async function loadOlderMessages() {
@@ -1086,6 +1087,36 @@
       }
     } catch (e) { /* ignore */ }
     finally { state.loadingOlder = false; }
+  }
+
+  // ---------- link previews ----------
+  const linkPreviewCache = new Map();
+  function renderLinkCard(d) {
+    const img = d.image ? `<div class="lc-img" style="background-image:url('${escapeHtml(d.image)}')"></div>` : '';
+    return `<a class="link-card" href="${escapeHtml(d.url)}" target="_blank" rel="noopener">${img}<div class="lc-body"><div class="lc-title">${escapeHtml(d.title || d.url)}</div>${d.description ? `<div class="lc-desc">${escapeHtml(d.description)}</div>` : ''}${d.siteName ? `<div class="lc-site">${escapeHtml(d.siteName)}</div>` : ''}</div></a>`;
+  }
+  async function loadLinkPreviews() {
+    const bwraps = messagesEl.querySelectorAll('.bwrap:not([data-lp])');
+    for (const bwrap of bwraps) {
+      bwrap.dataset.lp = '1';
+      const a = bwrap.querySelector('.msg-link');
+      if (!a) continue;
+      const url = a.getAttribute('href');
+      if (!url) continue;
+      try {
+        let data = linkPreviewCache.get(url);
+        if (data === undefined) {
+          data = await api('/api/link-preview?url=' + encodeURIComponent(url));
+          linkPreviewCache.set(url, data || null);
+        }
+        if (!bwrap.isConnected || bwrap.querySelector('.link-card')) continue;
+        if (data && (data.title || data.image)) {
+          const time = bwrap.querySelector('.m-time');
+          if (time) time.insertAdjacentHTML('beforebegin', renderLinkCard(data));
+          else bwrap.insertAdjacentHTML('beforeend', renderLinkCard(data));
+        }
+      } catch (e) { linkPreviewCache.set(url, null); }
+    }
   }
 
   // Show a plain "Seen" label under the last outgoing message (no avatar).
@@ -1156,6 +1187,7 @@
       newSinceScroll += 1;
     }
     updateScrollBtn();
+    loadLinkPreviews();
   }
 
   function reactionsHtml(m) {

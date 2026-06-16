@@ -40,9 +40,15 @@ elif ASYNC_MODE == "gevent":
         pass
 
 import re
+import time
 import secrets
 import functools
+import ipaddress
+from urllib.parse import urlparse
+from html import unescape as _html_unescape
 from datetime import datetime, timedelta, timezone
+
+import requests
 
 import jwt
 from flask import Flask, request, jsonify, g, send_from_directory
@@ -216,6 +222,93 @@ def maintenance_clear_media():
         return jsonify(error="Forbidden."), 403
     result = storage.clear_old_media(24)
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Link previews (server-side fetch with SSRF guards + small cache)
+# ---------------------------------------------------------------------------
+_PREVIEW_CACHE = {}  # url -> (ts, data)
+
+
+def _url_is_safe(url):
+    """Allow only public http(s) hosts (blocks localhost / private / metadata IPs)."""
+    try:
+        p = urlparse(url)
+        if p.scheme not in ("http", "https") or not p.hostname:
+            return False
+        for info in _socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80)):
+            ip = ipaddress.ip_address(info[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                    or ip.is_multicast or ip.is_unspecified):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _meta(html, prop):
+    for pat in (
+        r'<meta[^>]+(?:property|name)=["\']%s["\'][^>]*content=["\']([^"\']*)["\']',
+        r'<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']%s["\']',
+    ):
+        m = re.search(pat % re.escape(prop), html, re.I)
+        if m:
+            return _html_unescape(m.group(1)).strip()
+    return None
+
+
+def _parse_og(html, url):
+    title = _meta(html, "og:title")
+    if not title:
+        t = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+        title = _html_unescape(t.group(1)).strip() if t else None
+    desc = _meta(html, "og:description") or _meta(html, "description")
+    image = _meta(html, "og:image") or _meta(html, "og:image:url")
+    site = _meta(html, "og:site_name")
+    if image:
+        if image.startswith("//"):
+            image = "https:" + image
+        elif image.startswith("/"):
+            p = urlparse(url)
+            image = f"{p.scheme}://{p.netloc}{image}"
+    out = {"url": url}
+    if title:
+        out["title"] = title[:200]
+    if desc:
+        out["description"] = desc[:300]
+    if image and image.startswith(("http://", "https://")):
+        out["image"] = image[:700]
+    if site:
+        out["siteName"] = site[:100]
+    return out
+
+
+@app.get("/api/link-preview")
+@auth_required
+def link_preview():
+    url = (request.args.get("url") or "").strip()
+    if not url or len(url) > 2048 or not _url_is_safe(url):
+        return jsonify(error="Invalid URL."), 400
+    now = time.time()
+    hit = _PREVIEW_CACHE.get(url)
+    if hit and now - hit[0] < 3600:
+        return jsonify(hit[1])
+    data = {"url": url}
+    try:
+        resp = requests.get(
+            url, timeout=5, allow_redirects=True, stream=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TeaLinkPreview/1.0)"},
+        )
+        if "text/html" in resp.headers.get("Content-Type", ""):
+            raw = resp.raw.read(262144, decode_content=True) or b""
+            data = _parse_og(raw.decode(resp.encoding or "utf-8", "ignore"), url)
+        resp.close()
+    except Exception:
+        pass
+    if len(_PREVIEW_CACHE) > 500:
+        _PREVIEW_CACHE.clear()
+    _PREVIEW_CACHE[url] = (now, data)
+    return jsonify(data)
 
 
 # ---------------------------------------------------------------------------
