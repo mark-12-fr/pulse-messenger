@@ -122,6 +122,13 @@ class MessageRead(Base):
     last_read_message_id = mapped_column(Integer, nullable=False, default=0)
 
 
+class MessageDelivery(Base):
+    __tablename__ = "message_delivery"
+    conversation_id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, primary_key=True)
+    last_delivered_message_id = mapped_column(Integer, nullable=False, default=0)
+
+
 class MessageReaction(Base):
     __tablename__ = "message_reactions"
     id = mapped_column(Integer, primary_key=True)
@@ -629,6 +636,73 @@ def get_last_read(conversation_id, user_id):
     with session_scope() as s:
         mr = s.get(MessageRead, (conversation_id, user_id))
         return mr.last_read_message_id if mr else 0
+
+
+# ---------------------------------------------------------------------------
+# Delivery receipts (✓ sent · ✓✓ delivered · ✓✓ seen)
+# ---------------------------------------------------------------------------
+def get_last_delivered(conversation_id, user_id):
+    with session_scope() as s:
+        md = s.get(MessageDelivery, (conversation_id, user_id))
+        return md.last_delivered_message_id if md else 0
+
+
+def mark_conversation_delivered(conversation_id, user_id):
+    """Mark the latest inbound message in this conversation as delivered to
+    ``user_id``. Returns the new last-delivered id (0 if nothing to deliver)."""
+    with session_scope() as s:
+        latest = s.execute(
+            select(func.max(Message.id)).where(
+                Message.conversation_id == conversation_id,
+                Message.sender_id != user_id,
+            )
+        ).scalar()
+        if not latest:
+            return 0
+        md = s.get(MessageDelivery, (conversation_id, user_id))
+        if md:
+            if latest > md.last_delivered_message_id:
+                md.last_delivered_message_id = latest
+        else:
+            s.add(MessageDelivery(conversation_id=conversation_id, user_id=user_id,
+                                  last_delivered_message_id=latest))
+        return latest
+
+
+def deliver_all_pending(user_id):
+    """When ``user_id`` comes online, mark every conversation's latest inbound
+    message as delivered. Returns a list of
+    {conversationId, partnerId, lastDeliveredMessageId} for the conversations
+    that changed, so the senders can be told their messages were delivered."""
+    changed = []
+    with session_scope() as s:
+        convs = s.execute(
+            select(Conversation).where(
+                or_(Conversation.user_a == user_id, Conversation.user_b == user_id)
+            )
+        ).scalars().all()
+        for c in convs:
+            partner_id = c.user_b if c.user_a == user_id else c.user_a
+            latest = s.execute(
+                select(func.max(Message.id)).where(
+                    Message.conversation_id == c.id,
+                    Message.sender_id != user_id,
+                )
+            ).scalar()
+            if not latest:
+                continue
+            md = s.get(MessageDelivery, (c.id, user_id))
+            if md:
+                if latest > md.last_delivered_message_id:
+                    md.last_delivered_message_id = latest
+                else:
+                    continue
+            else:
+                s.add(MessageDelivery(conversation_id=c.id, user_id=user_id,
+                                      last_delivered_message_id=latest))
+            changed.append({"conversationId": c.id, "partnerId": partner_id,
+                            "lastDeliveredMessageId": latest})
+    return changed
 
 
 def unread_count(conversation_id, user_id):

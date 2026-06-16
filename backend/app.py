@@ -452,6 +452,7 @@ def conversation_messages(cid):
                 "iBlocked": db.i_blocked(me_id, partner_id),
                 "blockedMe": db.i_blocked(partner_id, me_id)},
         partnerLastRead=db.get_last_read(cid, partner_id),
+        partnerLastDelivered=db.get_last_delivered(cid, partner_id),
     )
 
 
@@ -543,6 +544,18 @@ def on_connect(auth):
     if was_offline:
         db.set_last_seen(uid)
         broadcast_presence(uid, True)
+    # Now that this user is connected, mark messages waiting for them as
+    # delivered and let the senders' ticks turn to ✓✓.
+    socketio.start_background_task(_deliver_pending, uid)
+
+
+def _deliver_pending(uid):
+    for d in db.deliver_all_pending(uid):
+        emit_to_user(d["partnerId"], "message:delivered", {
+            "conversationId": d["conversationId"],
+            "byUserId": uid,
+            "lastDeliveredMessageId": d["lastDeliveredMessageId"],
+        })
 
 
 @socketio.on("disconnect")
@@ -658,8 +671,29 @@ def on_message_read(payload):
         return
     db.mark_read(cid, uid, last["id"])
     partner_id = db.conversation_partner_id(conv, uid)
+    # Reading implies delivered too — keep the delivered marker in step.
+    db.mark_conversation_delivered(cid, uid)
     emit_to_user(partner_id, "message:read",
                  {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})
+
+
+@socketio.on("message:delivered")
+def on_message_delivered(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return
+    cid = int((payload or {}).get("conversationId") or 0)
+    if not cid:
+        return
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, uid):
+        return
+    last_id = db.mark_conversation_delivered(cid, uid)
+    if not last_id:
+        return
+    partner_id = db.conversation_partner_id(conv, uid)
+    emit_to_user(partner_id, "message:delivered",
+                 {"conversationId": cid, "byUserId": uid, "lastDeliveredMessageId": last_id})
 
 
 ALLOWED_REACTIONS = {"👍", "❤️", "😂", "😮", "😢", "😡"}

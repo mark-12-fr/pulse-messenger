@@ -501,6 +501,9 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 
 .m-time { font-size: 10.5px; color: var(--text-faint); margin: 1px 6px 6px; align-self: flex-end; }
 .msg.out .m-time { align-self: flex-start; }
+.ticks { display: inline-flex; vertical-align: -3px; margin-left: 3px; color: var(--text-faint); transition: color .2s var(--ease); }
+.ticks svg { display: block; }
+.ticks.seen { color: var(--accent); }
 
 .seen-row {
   align-self: flex-end;

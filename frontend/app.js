@@ -246,6 +246,7 @@
     socket.on('presence', onPresence);
     socket.on('typing', onTyping);
     socket.on('message:read', onMessageRead);
+    socket.on('message:delivered', onMessageDelivered);
     socket.on('message:reaction', onMessageReaction);
     socket.on('message:unsent', onMessageUnsent);
     socket.on('message:edited', onMessageEdited);
@@ -596,6 +597,7 @@
       const data = await api('/api/conversations/' + conversationId + '/messages');
       state.messages = data.messages;
       state.partnerLastRead = data.partnerLastRead || 0;
+      state.partnerLastDelivered = data.partnerLastDelivered || 0;
       // refresh peer online + block state from server response
       Object.assign(peer, {
         online: data.friend.online, lastSeen: data.friend.lastSeen,
@@ -665,9 +667,34 @@
     if (old) old.remove();
     if (!state.messages.length) return;
     const last = state.messages[state.messages.length - 1];
-    if (last && last.senderId === state.me.id && state.partnerLastRead >= last.id) {
+    if (last && last.senderId === state.me.id && (state.partnerLastRead || 0) >= last.id) {
       box.insertAdjacentHTML('beforeend', `<div class="seen-row">Seen</div>`);
     }
+  }
+
+  // Delivery state for one of MY messages: sent (✓) · delivered (✓✓) · seen (✓✓ accent)
+  function tickState(m) {
+    if (m.senderId !== state.me.id || m.unsent) return null;
+    if ((state.partnerLastRead || 0) >= m.id) return 'seen';
+    if ((state.partnerLastDelivered || 0) >= m.id) return 'delivered';
+    return 'sent';
+  }
+  function tickHtml(m) {
+    const st = tickState(m);
+    if (!st) return '';
+    return `<span class="ticks ${st}">${st === 'sent' ? IC.tick1 : IC.tick2}</span>`;
+  }
+  function updateTicks() {
+    const box = $('#messages');
+    if (!box) return;
+    state.messages.forEach((m) => {
+      const st = tickState(m);
+      if (!st) return;
+      const el = box.querySelector(`.msg[data-mid="${m.id}"] .ticks`);
+      if (!el) return;
+      el.className = 'ticks ' + st;
+      el.innerHTML = st === 'sent' ? IC.tick1 : IC.tick2;
+    });
   }
 
   // Append a single new message (with entrance animation) without re-rendering all.
@@ -713,7 +740,7 @@
       const name = m.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || 'They');
       return `<div class="bwrap"><div class="bubble unsent">🚫 ${escapeHtml(name)} unsent a message</div></div>`;
     }
-    const t = `<span class="m-time">${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}</span>`;
+    const t = `<span class="m-time">${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}${tickHtml(m)}</span>`;
     const rx = reactionsHtml(m);
     let inner;
     if (m.attachmentType === 'image') {
@@ -953,6 +980,10 @@
     conv.lastMessage = msg;
     conv.friend = friend;
 
+    // I received it — tell the sender it was delivered (✓✓), even if I'm not
+    // looking at this chat right now.
+    if (!isMine) state.socket.emit('message:delivered', { conversationId: convId });
+
     if (isOpen) {
       state.messages.push(msg);
       appendMessage(msg);
@@ -971,8 +1002,18 @@
   function onMessageRead(payload) {
     if (state.current && state.current.conversationId === payload.conversationId) {
       if (payload.byUserId !== state.me.id) {
-        state.partnerLastRead = Math.max(state.partnerLastRead, payload.lastReadMessageId);
+        state.partnerLastRead = Math.max(state.partnerLastRead || 0, payload.lastReadMessageId);
         updateSeenRow();
+        updateTicks();
+      }
+    }
+  }
+
+  function onMessageDelivered(payload) {
+    if (state.current && state.current.conversationId === payload.conversationId) {
+      if (payload.byUserId !== state.me.id) {
+        state.partnerLastDelivered = Math.max(state.partnerLastDelivered || 0, payload.lastDeliveredMessageId);
+        updateTicks();
       }
     }
   }
@@ -1743,6 +1784,8 @@
     logout: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>',
     camera: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>',
     check: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>',
+    tick1: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>',
+    tick2: '<svg viewBox="0 0 24 24" width="17" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 6-7.5 11L11 13"/><path d="m15 6-7.5 11L4 13"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
