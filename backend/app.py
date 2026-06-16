@@ -199,6 +199,18 @@ def health():
     return jsonify(status="ok")
 
 
+# Privacy auto-clear for media files (photos/videos/voice). Called on a schedule
+# by pg_cron. Token-protected so only the scheduler can trigger it. The backend
+# holds the Supabase service-role key, so it can delete via the Storage API.
+@app.route("/api/maintenance/clear-media", methods=["GET", "POST"])
+def maintenance_clear_media():
+    token = db.get_config("maint_token")
+    if not token or request.args.get("token") != token:
+        return jsonify(error="Forbidden."), 403
+    result = storage.clear_old_media(24)
+    return jsonify(result)
+
+
 # ---------------------------------------------------------------------------
 # Auth routes
 # ---------------------------------------------------------------------------

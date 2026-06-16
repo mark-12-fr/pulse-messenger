@@ -10,6 +10,7 @@ File storage for uploads.
 import os
 import time
 import secrets
+from datetime import datetime
 
 import requests
 
@@ -123,3 +124,65 @@ def save_file(file_storage, prefix=""):
         "name": file_storage.filename,
         "size": len(data),
     }
+
+
+def _parse_iso(s):
+    """Parse a Supabase ISO timestamp to a unix epoch (seconds). 0 on failure."""
+    if not s:
+        return 0
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0
+
+
+def clear_old_media(retention_hours=24):
+    """Delete media files older than ``retention_hours`` from the bucket root,
+    keeping the permanent ``avatars/`` sub-folder. Uses the Supabase Storage API
+    with the service-role key (the same one used for uploads). Returns a small
+    diagnostics dict. This is the privacy auto-clear for photos/videos/voice."""
+    if not _SUPABASE_READY:
+        return {"ok": False, "removed": 0, "reason": "supabase-not-configured"}
+
+    boundary = time.time() - retention_hours * 3600
+    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+    to_delete = []
+    offset = 0
+    page = 1000
+    try:
+        while True:
+            resp = requests.post(
+                f"{SUPABASE_URL}/storage/v1/object/list/{BUCKET}",
+                json={"prefix": "", "limit": page, "offset": offset,
+                      "sortBy": {"column": "created_at", "order": "asc"}},
+                headers=headers, timeout=30,
+            )
+            if resp.status_code != 200:
+                return {"ok": False, "removed": 0, "status": resp.status_code, "error": resp.text[:200]}
+            items = resp.json() or []
+            if not items:
+                break
+            for it in items:
+                name = it.get("name")
+                # skip the permanent avatars/ folder and folder placeholders (id is null)
+                if not name or name.startswith("avatars/") or it.get("id") is None:
+                    continue
+                ts = _parse_iso(it.get("created_at"))
+                if ts and ts < boundary:
+                    to_delete.append(name)
+            if len(items) < page:
+                break
+            offset += page
+
+        removed = 0
+        for i in range(0, len(to_delete), 100):
+            batch = to_delete[i:i + 100]
+            d = requests.delete(
+                f"{SUPABASE_URL}/storage/v1/object/{BUCKET}",
+                json={"prefixes": batch}, headers=headers, timeout=30,
+            )
+            if d.status_code in (200, 204):
+                removed += len(batch)
+        return {"ok": True, "removed": removed, "scanned_for_delete": len(to_delete)}
+    except Exception as e:
+        return {"ok": False, "removed": 0, "error": repr(e)[:200]}
