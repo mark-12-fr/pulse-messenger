@@ -489,14 +489,22 @@ def conversation_messages(cid):
     if not db.is_conversation_member(conv, me_id):
         return jsonify(error="Conversation not found."), 404
 
-    messages = db.get_messages(cid)
+    PAGE = 40
+    before = request.args.get("before", type=int)
+    # lazy-load an older page (no read-marking / no friend payload)
+    if before:
+        older = db.get_messages(cid, before_id=before, limit=PAGE)
+        return jsonify(messages=older, hasMore=len(older) == PAGE)
+
+    messages = db.get_messages(cid, limit=PAGE)
+    has_more = len(messages) == PAGE
     if messages:
         last_id = messages[-1]["id"]
         db.mark_read(cid, me_id, last_id)
 
     # --- group conversation ---
     if conv.get("is_group"):
-        return jsonify(messages=messages, group=db.public_conversation_meta(conv, me_id))
+        return jsonify(messages=messages, hasMore=has_more, group=db.public_conversation_meta(conv, me_id))
 
     # --- 1-to-1 conversation ---
     partner_id = db.conversation_partner_id(conv, me_id)
@@ -506,6 +514,7 @@ def conversation_messages(cid):
                      {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": messages[-1]["id"]})
     return jsonify(
         messages=messages,
+        hasMore=has_more,
         friend={**partner, "online": is_online(partner_id),
                 "iBlocked": db.i_blocked(me_id, partner_id),
                 "blockedMe": db.i_blocked(partner_id, me_id)},

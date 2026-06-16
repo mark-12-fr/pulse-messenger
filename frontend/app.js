@@ -386,6 +386,7 @@
 
     // header
     renderMeHeader();
+    loadOutbox();
 
     // show a shimmer placeholder immediately so the list feels instant
     showChatsSkeleton();
@@ -431,7 +432,10 @@
     const socket = API_BASE ? io(API_BASE, opts) : io(opts);
     state.socket = socket;
 
-    socket.on('connect', () => socket.emit('presence:active', { active: document.visibilityState !== 'hidden' }));
+    socket.on('connect', () => {
+      socket.emit('presence:active', { active: document.visibilityState !== 'hidden' });
+      flushOutbox(); // send anything composed while offline
+    });
 
     socket.on('connect_error', (err) => {
       if (err && String(err.message || '').toLowerCase().includes('unauthorized')) logout();
@@ -486,6 +490,22 @@
   }
   async function loadRequests() {
     state.requests = await api('/api/friends/requests');
+  }
+
+  // ---------- offline send queue ----------
+  const outboxKey = () => 'tea_outbox_' + (state.me ? state.me.id : '0');
+  function loadOutbox() { try { state.outbox = JSON.parse(localStorage.getItem(outboxKey()) || '[]'); } catch (e) { state.outbox = []; } }
+  function saveOutbox() { try { localStorage.setItem(outboxKey(), JSON.stringify(state.outbox || [])); } catch (e) {} }
+  function queueOutbox(payload) { state.outbox = state.outbox || []; state.outbox.push(payload); saveOutbox(); }
+  function flushOutbox() {
+    if (!state.socket || !state.socket.connected || !(state.outbox && state.outbox.length)) return;
+    const queued = state.outbox;
+    state.outbox = [];
+    saveOutbox();
+    queued.forEach((p) => state.socket.emit('message:send', p, (resp) => {
+      if (resp && resp.error) toast('⚠️', 'Not sent', resp.error);
+    }));
+    toast('✅', 'Sent', queued.length > 1 ? `${queued.length} queued messages sent` : 'Queued message sent');
   }
 
   // ============================================================
@@ -873,6 +893,8 @@
     try {
       const data = await api('/api/conversations/' + conversationId + '/messages');
       state.messages = data.messages;
+      state.hasMore = !!data.hasMore;
+      state.loadingOlder = false;
       state.partnerLastRead = data.partnerLastRead || 0;
       state.partnerLastDelivered = data.partnerLastDelivered || 0;
       // refresh peer online + block state from server response
@@ -918,6 +940,8 @@
     try {
       const data = await api('/api/conversations/' + cid + '/messages');
       state.messages = data.messages;
+      state.hasMore = !!data.hasMore;
+      state.loadingOlder = false;
       state.partnerLastRead = 0;
       state.partnerLastDelivered = 0;
       if (data.group) {
@@ -971,7 +995,8 @@
     if (dot) dot.classList.toggle('on', !!peer.online);
   }
 
-  function renderMessages() {
+  function renderMessages(opts) {
+    opts = opts || {};
     const box = $('#messages');
     if (!state.messages.length) {
       box.innerHTML = `<div class="empty-note">No messages yet. Say hello! 👋</div>`;
@@ -1004,10 +1029,35 @@
     box.innerHTML = html;
     updateSeenRow();
     bindVoicePlayers();
-    box.scrollTop = box.scrollHeight;
-    if (state.current) state.current.unreadAtOpen = 0;
-    newSinceScroll = 0;
+    if (opts.preserveFromHeight != null) {
+      // keep the viewport on the same message after prepending older history
+      box.scrollTop = box.scrollHeight - opts.preserveFromHeight;
+    } else {
+      box.scrollTop = box.scrollHeight;
+      if (state.current) state.current.unreadAtOpen = 0;
+      newSinceScroll = 0;
+    }
     updateScrollBtn();
+  }
+
+  async function loadOlderMessages() {
+    if (!state.current || !state.hasMore || state.loadingOlder) return;
+    const oldest = state.messages[0] && state.messages[0].id;
+    if (!oldest) return;
+    state.loadingOlder = true;
+    const prevH = messagesEl.scrollHeight;
+    try {
+      const data = await api('/api/conversations/' + state.current.conversationId + '/messages?before=' + oldest);
+      const older = data.messages || [];
+      if (older.length) {
+        state.messages = older.concat(state.messages);
+        state.hasMore = !!data.hasMore;
+        renderMessages({ preserveFromHeight: prevH });
+      } else {
+        state.hasMore = false;
+      }
+    } catch (e) { /* ignore */ }
+    finally { state.loadingOlder = false; }
   }
 
   // Show a plain "Seen" label under the last outgoing message (no avatar).
@@ -1229,18 +1279,21 @@
     }
     if (!body && !state.attachment) return;
 
-    state.socket.emit(
-      'message:send',
-      {
-        ...sendTarget(),
-        body,
-        attachment: state.attachment,
-        replyToId: state.replyTo ? state.replyTo.id : null,
-      },
-      (resp) => {
+    const payload = {
+      ...sendTarget(),
+      body,
+      attachment: state.attachment,
+      replyToId: state.replyTo ? state.replyTo.id : null,
+    };
+    haptic();
+    if (!state.socket || !state.socket.connected) {
+      queueOutbox(payload);
+      toast('📨', 'Queued', "Will send when you're back online");
+    } else {
+      state.socket.emit('message:send', payload, (resp) => {
         if (resp && resp.error) toast('⚠️', 'Not sent', resp.error);
-      }
-    );
+      });
+    }
 
     msgInput.value = '';
     msgInput.style.height = 'auto';
@@ -2003,7 +2056,10 @@
     }
     if (!show) newSinceScroll = 0;
   }
-  messagesEl.addEventListener('scroll', updateScrollBtn, { passive: true });
+  messagesEl.addEventListener('scroll', () => {
+    updateScrollBtn();
+    if (messagesEl.scrollTop < 80) loadOlderMessages();
+  }, { passive: true });
   (function () {
     const btn = document.getElementById('scroll-bottom');
     if (btn) btn.addEventListener('click', () => {

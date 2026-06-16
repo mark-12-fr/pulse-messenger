@@ -660,12 +660,16 @@ def create_message(conversation_id, sender_id, body=None,
         return d
 
 
-def get_messages(conversation_id):
+def get_messages(conversation_id, before_id=None, limit=40):
+    """Return up to ``limit`` messages (ascending). With ``before_id``, returns the
+    page of messages immediately older than that id (for lazy-loading history)."""
     with session_scope() as s:
-        rows = s.execute(
-            select(Message).where(Message.conversation_id == conversation_id)
-            .order_by(Message.id.asc()).limit(500)
-        ).scalars().all()
+        q = select(Message).where(Message.conversation_id == conversation_id)
+        if before_id:
+            q = q.where(Message.id < before_id)
+        # take the newest `limit`, then flip back to chronological order
+        rows = s.execute(q.order_by(Message.id.desc()).limit(limit)).scalars().all()
+        rows = list(reversed(rows))
         msgs = [public_message(m) for m in rows]
         ids = [m["id"] for m in msgs]
         if ids:
