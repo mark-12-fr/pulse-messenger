@@ -502,9 +502,12 @@ def conversation_messages(cid):
         last_id = messages[-1]["id"]
         db.mark_read(cid, me_id, last_id)
 
+    pinned = db.get_pinned_message(cid)
+
     # --- group conversation ---
     if conv.get("is_group"):
-        return jsonify(messages=messages, hasMore=has_more, group=db.public_conversation_meta(conv, me_id))
+        return jsonify(messages=messages, hasMore=has_more, pinnedMessage=pinned,
+                       group=db.public_conversation_meta(conv, me_id))
 
     # --- 1-to-1 conversation ---
     partner_id = db.conversation_partner_id(conv, me_id)
@@ -515,6 +518,7 @@ def conversation_messages(cid):
     return jsonify(
         messages=messages,
         hasMore=has_more,
+        pinnedMessage=pinned,
         friend={**partner, "online": is_online(partner_id),
                 "iBlocked": db.i_blocked(me_id, partner_id),
                 "blockedMe": db.i_blocked(partner_id, me_id)},
@@ -963,6 +967,22 @@ def on_message_delete(payload):
     data = {"messageId": message_id, "conversationId": meta["conversationId"]}
     emit_conv(conv, "message:unsent", data)
     return {"ok": True}
+
+
+@socketio.on("message:pin")
+def on_message_pin(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    cid = int(payload.get("conversationId") or 0)
+    message_id = int(payload.get("messageId") or 0) or None
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, uid):
+        return {"error": "Conversation not found."}
+    pinned = db.set_pinned_message(cid, message_id)
+    emit_conv(conv, "conversation:pin", {"conversationId": cid, "message": pinned})
+    return {"ok": True, "message": pinned}
 
 
 @socketio.on("conversation:delete")

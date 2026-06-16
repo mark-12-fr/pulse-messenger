@@ -1167,3 +1167,11 @@ html.resume #auth-screen { display: none; }
 .bubble code, .caption code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9em; background: rgba(127,127,127,.2); padding: 1px 5px; border-radius: 6px; }
 .bubble .msg-link, .caption .msg-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 .bubble strong, .caption strong { font-weight: 750; }
+
+/* pinned message banner */
+.pin-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); cursor: pointer; }
+.pin-bar .pin-ic { color: var(--accent); flex-shrink: 0; display: flex; }
+.pin-main { flex: 1; min-width: 0; border-left: 3px solid var(--accent); padding-left: 9px; }
+.pin-label { font-size: 11px; font-weight: 750; color: var(--accent); }
+.pin-prev { font-size: 13px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pin-x { width: 32px; height: 32px; flex-shrink: 0; }

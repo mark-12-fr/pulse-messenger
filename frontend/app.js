@@ -471,6 +471,7 @@
     socket.on('message:unsent', onMessageUnsent);
     socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
+    socket.on('conversation:pin', onConversationPin);
     socket.on('conversation:new', onConversationNew);
     socket.on('group:updated', onGroupUpdated);
     socket.on('group:removed', onGroupRemoved);
@@ -892,6 +893,7 @@
     cancelReply();
     cancelEdit();
     restoreDraft(conversationId);
+    renderPinnedBanner(null);
     setComposerBlocked(peer); // reset to cached state; refreshed after messages load
 
     $('#chat-empty').classList.add('hidden');
@@ -915,6 +917,7 @@
       state.loadingOlder = false;
       state.partnerLastRead = data.partnerLastRead || 0;
       state.partnerLastDelivered = data.partnerLastDelivered || 0;
+      renderPinnedBanner(data.pinnedMessage);
       // refresh peer online + block state from server response
       Object.assign(peer, {
         online: data.friend.online, lastSeen: data.friend.lastSeen,
@@ -946,6 +949,7 @@
     cancelReply();
     cancelEdit();
     restoreDraft(cid);
+    renderPinnedBanner(null);
     setComposerBlocked(null); // groups can't be blocked — make sure composer shows
 
     $('#chat-empty').classList.add('hidden');
@@ -966,6 +970,7 @@
         if (conv) conv.group = data.group;
         renderGroupHeader(data.group);
       }
+      renderPinnedBanner(data.pinnedMessage);
       state.current.unreadAtOpen = conv ? (conv.unread || 0) : 0;
       renderMessages();
       if (conv) { conv.unread = 0; }
@@ -2231,6 +2236,7 @@
         <div class="mm-actions">
           <button class="mm-act" data-reply="1">Reply</button>
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-forward="1">Forward</button>` : ''}
+          ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-pin-msg="1">${state.pinned && state.pinned.id === m.id ? 'Unpin' : 'Pin'}</button>` : ''}
           ${mine && m.body ? `<button class="mm-act" data-edit="1">Edit</button>` : ''}
           ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
           ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
@@ -2247,6 +2253,11 @@
       if (e.target.closest('[data-emoji-more]')) { close(); openEmojiPicker(mid); return; }
       if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
       if (e.target.closest('[data-forward]')) { close(); openForward(m); return; }
+      if (e.target.closest('[data-pin-msg]')) {
+        const isPinned = state.pinned && state.pinned.id === mid;
+        pinMessage(isPinned ? null : mid);
+        return close();
+      }
       if (e.target.closest('[data-edit]')) { startEdit(m); return close(); }
       if (e.target.closest('[data-unsend]')) { unsendMessage(mid); return close(); }
       if (e.target.closest('[data-copy]')) {
@@ -2355,6 +2366,43 @@
     });
   }
 
+  // ---------- pinned message ----------
+  function renderPinnedBanner(msg) {
+    const bar = document.getElementById('pin-bar');
+    if (!bar) return;
+    state.pinned = msg || null;
+    if (!msg) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    bar.classList.remove('hidden');
+    bar.innerHTML = `
+      <span class="pin-ic">${IC.pin}</span>
+      <div class="pin-main" data-pin-jump="${msg.id}">
+        <div class="pin-label">Pinned message</div>
+        <div class="pin-prev">${escapeHtml(msgPreviewShort(msg))}</div>
+      </div>
+      <button class="icon-btn pin-x" data-unpin aria-label="Unpin">✕</button>`;
+  }
+  function pinMessage(mid) {
+    if (!state.socket || !state.current) return;
+    haptic();
+    state.socket.emit('message:pin', { conversationId: state.current.conversationId, messageId: mid }, (r) => {
+      if (r && r.error) toast('⚠️', 'Could not pin', r.error);
+    });
+  }
+  (function () {
+    const bar = document.getElementById('pin-bar');
+    if (!bar) return;
+    bar.addEventListener('click', (e) => {
+      if (e.target.closest('[data-unpin]')) { pinMessage(null); return; }
+      const j = e.target.closest('[data-pin-jump]');
+      if (j) jumpToMessage(Number(j.dataset.pinJump));
+    });
+  })();
+  function onConversationPin(payload) {
+    if (state.current && state.current.conversationId === payload.conversationId) {
+      renderPinnedBanner(payload.message);
+    }
+  }
+
   function onMessageReaction(payload) {
     const m = state.messages.find((x) => x.id === payload.messageId);
     if (m && state.current && state.current.conversationId === payload.conversationId) {
@@ -2392,6 +2440,10 @@
   }
 
   function onMessageUnsent(payload) {
+    if (state.pinned && state.pinned.id === payload.messageId &&
+        state.current && state.current.conversationId === payload.conversationId) {
+      renderPinnedBanner(null);
+    }
     const m = state.messages.find((x) => x.id === payload.messageId);
     if (m) {
       m.unsent = true; m.body = null;
@@ -3041,6 +3093,7 @@
     lock: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
     devices: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="13" height="10" rx="2"/><path d="M2 18h13"/><rect x="17" y="8" width="5" height="12" rx="1.5"/></svg>',
     share: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5 8.6 10.5"/></svg>',
+    pin: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 3h6l-1 7 3 2.5V14H7v-1.5L10 10 9 3Z"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];

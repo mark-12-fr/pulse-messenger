@@ -101,6 +101,7 @@ class Conversation(Base):
     avatar_url = mapped_column(Text, nullable=True)      # group photo
     avatar_color = mapped_column(String(16), nullable=True)
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    pinned_message_id = mapped_column(Integer, nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("user_a", "user_b", name="uq_conv_pair"),)
 
@@ -700,6 +701,36 @@ def get_last_message(conversation_id):
             select(Message).where(Message.conversation_id == conversation_id)
             .order_by(Message.id.desc()).limit(1)
         ).scalar_one_or_none()
+        return public_message(m)
+
+
+def set_pinned_message(conversation_id, message_id):
+    """Pin (or unpin with None) a message in a conversation. Validates the message
+    belongs to the conversation. Returns the pinned public_message or None."""
+    with session_scope() as s:
+        conv = s.get(Conversation, conversation_id)
+        if not conv:
+            return None
+        if message_id:
+            m = s.get(Message, message_id)
+            if not m or m.conversation_id != conversation_id or m.unsent:
+                return None
+            conv.pinned_message_id = message_id
+            return public_message(m)
+        conv.pinned_message_id = None
+        return None
+
+
+def get_pinned_message(conversation_id):
+    """Return the pinned public_message, or None if unset / already expired."""
+    with session_scope() as s:
+        conv = s.get(Conversation, conversation_id)
+        if not conv or not conv.pinned_message_id:
+            return None
+        m = s.get(Message, conv.pinned_message_id)
+        if not m or m.unsent:
+            conv.pinned_message_id = None  # clean up a dangling pin
+            return None
         return public_message(m)
 
 
