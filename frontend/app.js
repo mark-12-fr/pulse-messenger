@@ -48,11 +48,15 @@
 
   // Lightweight WhatsApp-style formatting on already-escaped text + clickable links.
   function fmtInline(s) {
-    return s
+    s = s
       .replace(/`([^`\n]+)`/g, '<code>$1</code>')
       .replace(/(^|\s)\*(\S(?:[^*\n]*\S)?)\*(?=\s|$|[.,!?;:])/g, '$1<strong>$2</strong>')
       .replace(/(^|\s)_(\S(?:[^_\n]*\S)?)_(?=\s|$|[.,!?;:])/g, '$1<em>$2</em>')
       .replace(/(^|\s)~(\S(?:[^~\n]*\S)?)~(?=\s|$|[.,!?;:])/g, '$1<del>$2</del>');
+    const meU = state.me ? String(state.me.username).toLowerCase() : '';
+    s = s.replace(/(^|\s)@(\w{2,32})/g, (mm, pre, name) =>
+      `${pre}<span class="mention${name.toLowerCase() === meU ? ' mention-me' : ''}">@${name}</span>`);
+    return s;
   }
   function formatText(escaped) {
     const urlRe = /(https?:\/\/[^\s<]+)/g;
@@ -1258,7 +1262,45 @@
     msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
     refreshSendState();
     emitTyping();
+    updateMentionPop();
   });
+
+  // ---------- @mention autocomplete (groups) ----------
+  const mentionPop = document.getElementById('mention-pop');
+  let mentionAnchor = -1;
+  function hideMention() { if (mentionPop) { mentionPop.classList.add('hidden'); mentionPop.innerHTML = ''; } mentionAnchor = -1; }
+  function updateMentionPop() {
+    if (!mentionPop) return;
+    if (!state.current || !state.current.isGroup) return hideMention();
+    const caret = msgInput.selectionStart;
+    const m = msgInput.value.slice(0, caret).match(/(^|\s)@(\w*)$/);
+    if (!m) return hideMention();
+    mentionAnchor = m.index + m[1].length; // index of the '@'
+    const q = m[2].toLowerCase();
+    const members = ((state.current.group && state.current.group.members) || []).filter((u) =>
+      u.id !== state.me.id &&
+      (u.username.toLowerCase().startsWith(q) || String(u.displayName || '').toLowerCase().includes(q)));
+    if (!members.length) return hideMention();
+    mentionPop.innerHTML = members.slice(0, 6).map((u) =>
+      `<button class="mention-row" data-mu="${escapeHtml(u.username)}">${avatarHtml(u, { cls: 'sm' })}<span class="mention-row-main"><span class="mention-row-name">${escapeHtml(u.displayName)}</span><span class="mention-row-user">@${escapeHtml(u.username)}</span></span></button>`).join('');
+    mentionPop.classList.remove('hidden');
+  }
+  if (mentionPop) mentionPop.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-mu]');
+    if (!row || mentionAnchor < 0) return;
+    const caret = msgInput.selectionStart;
+    const before = msgInput.value.slice(0, mentionAnchor);
+    const after = msgInput.value.slice(caret);
+    const insert = '@' + row.dataset.mu + ' ';
+    msgInput.value = before + insert + after;
+    const pos = (before + insert).length;
+    msgInput.setSelectionRange(pos, pos);
+    hideMention();
+    msgInput.focus();
+    refreshSendState();
+  });
+  msgInput.addEventListener('keyup', (e) => { if (e.key !== 'Enter') updateMentionPop(); });
+  msgInput.addEventListener('blur', () => setTimeout(hideMention, 150));
 
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

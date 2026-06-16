@@ -821,15 +821,28 @@ def on_message_send(payload):
 
     emit_conv(conv, "message:new", envelope)
 
-    # Push to recipients who aren't actively in the app and haven't muted this chat.
-    # Content-free notifications: never put the actual message text in the push.
+    # Work out who was @mentioned (group only) so they're notified even if muted.
+    mentioned = set()
+    if is_group and body:
+        tokens = set(re.findall(r"(?:^|\s)@(\w{2,32})", body.lower()))
+        if tokens:
+            for mem_id in db.conversation_member_ids(conv):
+                u = db.get_user_by_id(mem_id)
+                if u and u["username"].lower() in tokens:
+                    mentioned.add(mem_id)
+
+    # Push to recipients who aren't actively in the app and haven't muted this chat
+    # (mentions override mute). Content-free: never put the message text in the push.
     title = (conv.get("name") or "Group") if is_group else sender["displayName"]
     bodytext = (f"{sender['displayName']} sent a message") if is_group else "Sent you a message"
     for mid in db.conversation_member_ids(conv):
-        if not mid or mid == uid:
+        if not mid or mid == uid or is_active(mid):
             continue
-        if not is_active(mid) and not db.is_muted(mid, conv["id"]):
-            socketio.start_background_task(_push_message, mid, title, bodytext[:120], conv["id"])
+        is_mention = mid in mentioned
+        if not is_mention and db.is_muted(mid, conv["id"]):
+            continue
+        body_for = (f"{sender['displayName']} mentioned you") if is_mention else bodytext
+        socketio.start_background_task(_push_message, mid, title, body_for[:120], conv["id"])
     return {"ok": True, "message": msg}
 
 
