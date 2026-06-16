@@ -118,6 +118,7 @@ def sign_token(user):
     payload = {
         "id": user["id"],
         "username": user["username"],
+        "tv": db.get_token_version(user["id"]),
         "exp": datetime.now(timezone.utc) + timedelta(days=365),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
@@ -126,9 +127,15 @@ def sign_token(user):
 def user_from_token(token):
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return db.get_user_by_id(payload["id"])
     except Exception:
         return None
+    info = db.auth_user(payload.get("id"))
+    if not info:
+        return None
+    # token_version mismatch -> token was revoked (password change / logout-others)
+    if int(payload.get("tv", 0)) != info["tv"]:
+        return None
+    return info["user"]
 
 
 def auth_required(fn):
@@ -274,6 +281,33 @@ def update_me():
         set_avatar=("avatarUrl" in data),
     )
     return jsonify(user=user)
+
+
+@app.post("/api/me/password")
+@auth_required
+def change_password():
+    data = request.get_json(silent=True) or {}
+    current = str(data.get("currentPassword", ""))
+    newpw = str(data.get("newPassword", ""))
+    me_id = g.user["id"]
+    full = db.get_auth_user(g.user["username"])
+    if not full or not check_password_hash(full["passwordHash"], current):
+        return jsonify(error="Current password is incorrect."), 400
+    if len(newpw) < 6:
+        return jsonify(error="New password must be at least 6 characters."), 400
+    db.set_password(me_id, generate_password_hash(newpw, method="pbkdf2:sha256"))
+    # password change revokes other sessions; reissue THIS device a fresh token
+    token = sign_token({"id": me_id, "username": g.user["username"]})
+    return jsonify(ok=True, token=token)
+
+
+@app.post("/api/me/logout-others")
+@auth_required
+def logout_others():
+    me_id = g.user["id"]
+    db.bump_token_version(me_id)
+    token = sign_token({"id": me_id, "username": g.user["username"]})
+    return jsonify(ok=True, token=token)
 
 
 # ---------------------------------------------------------------------------

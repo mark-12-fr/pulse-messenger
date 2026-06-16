@@ -76,6 +76,7 @@ class User(Base):
     password_hash = mapped_column(Text, nullable=False)
     avatar_color = mapped_column(String(16), nullable=False)
     avatar_url = mapped_column(Text, nullable=True)
+    token_version = mapped_column(Integer, nullable=False, default=0)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -264,6 +265,42 @@ def create_user(username, display_name, password_hash, avatar_color):
         s.add(u)
         s.flush()
         return public_user(u)
+
+
+def auth_user(uid):
+    """For token validation: returns {user: public_user, tv: token_version} or None."""
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if not u:
+            return None
+        return {"user": public_user(u), "tv": int(u.token_version or 0)}
+
+
+def get_token_version(uid):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        return int(u.token_version or 0) if u else 0
+
+
+def bump_token_version(uid):
+    """Invalidate every existing token for this user (log out all devices)."""
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if not u:
+            return 0
+        u.token_version = (u.token_version or 0) + 1
+        return int(u.token_version)
+
+
+def set_password(uid, password_hash):
+    """Set a new password hash and bump token_version (revokes other sessions)."""
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if not u:
+            return False
+        u.password_hash = password_hash
+        u.token_version = (u.token_version or 0) + 1
+        return True
 
 
 def get_user_by_id(uid):

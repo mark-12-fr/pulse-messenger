@@ -240,6 +240,75 @@
       if (e.target.closest('#cl-yes')) { close(); logout(); }
     });
   }
+
+  function openChangePassword() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>Change password</h3>
+        <div class="field"><label>Current password</label><input type="password" id="cp-cur" autocomplete="current-password"></div>
+        <div class="field"><label>New password</label><input type="password" id="cp-new" autocomplete="new-password"></div>
+        <div class="field"><label>Confirm new password</label><input type="password" id="cp-confirm" autocomplete="new-password"></div>
+        <div id="cp-err" class="auth-error"></div>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-primary" id="cp-save">Update</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
+    const errBox = overlay.querySelector('#cp-err');
+    overlay.querySelector('#cp-save').addEventListener('click', async () => {
+      const cur = overlay.querySelector('#cp-cur').value;
+      const nw = overlay.querySelector('#cp-new').value;
+      const cf = overlay.querySelector('#cp-confirm').value;
+      const btn = overlay.querySelector('#cp-save');
+      const fail = (m) => { errBox.textContent = m; errBox.classList.add('error', 'show'); };
+      if (nw.length < 6) return fail('New password must be at least 6 characters.');
+      if (nw !== cf) return fail('New passwords do not match.');
+      btn.disabled = true;
+      try {
+        const r = await api('/api/me/password', { method: 'POST', body: { currentPassword: cur, newPassword: nw } });
+        if (r.token) { state.token = r.token; localStorage.setItem('pulse_token', r.token); }
+        close();
+        toast('✅', 'Password changed', 'Other devices were signed out');
+      } catch (e2) { fail(e2.message); btn.disabled = false; }
+    });
+  }
+
+  function confirmLogoutOthers() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card confirm-card">
+        <div class="confirm-ic">${IC.devices}</div>
+        <h3>Log out other devices?</h3>
+        <p class="confirm-text">You'll stay signed in here. Every other phone, tablet and computer will be signed out of Tea.</p>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-danger" id="lo-yes">Log out others</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', async (e) => {
+      if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('#lo-yes')) {
+        const btn = overlay.querySelector('#lo-yes');
+        btn.disabled = true;
+        try {
+          const r = await api('/api/me/logout-others', { method: 'POST' });
+          if (r.token) { state.token = r.token; localStorage.setItem('pulse_token', r.token); }
+          close();
+          toast('✅', 'Done', 'Other devices were signed out');
+        } catch (e2) { toast('⚠️', 'Error', e2.message); btn.disabled = false; }
+      }
+    });
+  }
   $('#logout-btn').addEventListener('click', confirmLogout);
 
   // Show / hide password on the login & sign-up form
@@ -2704,6 +2773,8 @@
     eyeOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-3 3.9M6.6 6.6A18.6 18.6 0 0 0 2 11s3.5 7 10 7a10.8 10.8 0 0 0 4.4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></svg>',
     success: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>',
     error: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+    devices: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="13" height="10" rx="2"/><path d="M2 18h13"/><rect x="17" y="8" width="5" height="12" rx="1.5"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
@@ -2855,6 +2926,8 @@
         <div class="set-section set-list">
           <button class="set-row" data-notif="1"><span class="set-main">${IC.bell}<span>Notifications</span></span><span class="set-state" id="set-notif">…</span></button>
           <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
+          <button class="set-row" data-password="1"><span class="set-main">${IC.lock}<span>Change password</span></span><span class="set-state">›</span></button>
+          <button class="set-row" data-logout-others="1"><span class="set-main">${IC.devices}<span>Log out other devices</span></span><span class="set-state">›</span></button>
           <button class="set-row danger" data-logout="1"><span class="set-main">${IC.logout}<span>Log out</span></span></button>
         </div>
         <button class="mm-act" data-cancel="1">Close</button>
@@ -2894,6 +2967,8 @@
         return;
       }
       if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }
+      if (e.target.closest('[data-password]')) { close(); openChangePassword(); return; }
+      if (e.target.closest('[data-logout-others]')) { close(); confirmLogoutOthers(); return; }
       if (e.target.closest('[data-logout]')) { close(); confirmLogout(); return; }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
     });
