@@ -187,6 +187,22 @@
     }
   });
 
+  // Wipe everything the previous account rendered so nothing flashes when the
+  // next account (or a brand-new sign-up) logs in.
+  function clearAppUI() {
+    ['#tab-chats', '#tab-friends', '#tab-requests', '#search-results', '#messages'].forEach((sel) => {
+      const el = $(sel);
+      if (el) el.innerHTML = '';
+    });
+    const ca = $('#chat-active'); if (ca) ca.classList.add('hidden');
+    const ce = $('#chat-empty'); if (ce) ce.classList.remove('hidden');
+    const meName = $('#me-name'); if (meName) meName.textContent = '';
+    const meUser = $('#me-username'); if (meUser) meUser.textContent = '';
+    const meAv = document.querySelector('.me .avatar'); if (meAv) { meAv.innerHTML = ''; meAv.style.background = 'transparent'; }
+    const si = $('#search-input'); if (si) si.value = '';
+    const sr = $('#search-results'); if (sr) sr.classList.add('hidden');
+  }
+
   function logout() {
     if (state.socket) state.socket.disconnect();
     localStorage.removeItem('pulse_token');
@@ -195,18 +211,61 @@
       conversations: new Map(), requests: { incoming: [], outgoing: [] },
       current: null, messages: [], attachment: null,
     });
+    clearAppUI();
     document.documentElement.classList.remove('resume');
     $('#splash').classList.add('hidden');
     appScreen.classList.add('hidden');
     authScreen.classList.remove('hidden');
+    setAuthMode('login');
     $('#auth-form').reset();
   }
-  $('#logout-btn').addEventListener('click', logout);
+
+  // Ask before logging out (no accidental one-tap sign-out).
+  function confirmLogout() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card confirm-card">
+        <div class="confirm-ic">${IC.logout}</div>
+        <h3>Log out?</h3>
+        <p class="confirm-text">Are you sure you want to log out of Tea?</p>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-danger" id="cl-yes">Log out</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('#cl-yes')) { close(); logout(); }
+    });
+  }
+  $('#logout-btn').addEventListener('click', confirmLogout);
+
+  // Show / hide password on the login & sign-up form
+  (function () {
+    const tog = document.getElementById('pw-toggle');
+    const pw = document.getElementById('f-password');
+    if (!tog || !pw) return;
+    const EYE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const EYE_OFF = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-3 3.9M6.6 6.6A18.6 18.6 0 0 0 2 11s3.5 7 10 7a10.8 10.8 0 0 0 4.4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></svg>';
+    tog.innerHTML = EYE;
+    tog.addEventListener('click', () => {
+      const show = pw.type === 'password';
+      pw.type = show ? 'text' : 'password';
+      tog.innerHTML = show ? EYE_OFF : EYE;
+      tog.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      pw.focus();
+    });
+  })();
 
   // ============================================================
   // ENTER APP
   // ============================================================
   async function enterApp() {
+    clearAppUI();
     authScreen.classList.add('hidden');
     $('#splash').classList.add('hidden');
     appScreen.classList.remove('hidden');
@@ -214,9 +273,25 @@
     // header
     renderMeHeader();
 
+    // show a shimmer placeholder immediately so the list feels instant
+    showChatsSkeleton();
+
     connectSocket();
     await Promise.all([loadFriends(), loadConversations(), loadRequests()]);
     renderAll();
+  }
+
+  function showChatsSkeleton() {
+    const box = $('#tab-chats');
+    if (!box) return;
+    box.innerHTML = Array.from({ length: 6 }).map(() => `
+      <div class="row sk-row">
+        <div class="sk sk-av"></div>
+        <div class="row-main">
+          <div class="sk sk-line" style="width:42%"></div>
+          <div class="sk sk-line" style="width:70%;margin-top:9px"></div>
+        </div>
+      </div>`).join('');
   }
 
   function renderMeHeader() {
@@ -1457,20 +1532,113 @@
     if (!light) return;
     const type = light.dataset.light;
     const body = $('#lightbox-body');
-    body.innerHTML =
-      type === 'image'
-        ? `<img src="${light.getAttribute('src')}">`
-        : `<video src="${light.getAttribute('src')}" controls autoplay></video>`;
+    if (type === 'image') {
+      body.innerHTML = `<img class="lb-img" src="${light.getAttribute('src')}" alt="">`;
+      setupImageZoom(body.querySelector('.lb-img'));
+    } else {
+      body.innerHTML = `<video src="${light.getAttribute('src')}" controls autoplay></video>`;
+    }
     $('#lightbox').classList.remove('hidden');
   });
   $('#lightbox-close').addEventListener('click', closeLightbox);
   $('#lightbox').addEventListener('click', (e) => {
-    if (e.target.id === 'lightbox') closeLightbox();
+    if (e.target.id === 'lightbox' || e.target.id === 'lightbox-body') closeLightbox();
   });
   function closeLightbox() {
     $('#lightbox-body').innerHTML = '';
     $('#lightbox').classList.add('hidden');
   }
+
+  // Pinch / wheel / double-tap zoom + drag-to-pan for the lightbox image.
+  function setupImageZoom(img) {
+    if (!img) return;
+    let scale = 1, tx = 0, ty = 0;
+    let startDist = 0, startScale = 1;
+    let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
+    let lastTap = 0;
+    const smooth = (on) => { img.style.transition = on ? 'transform .2s cubic-bezier(.2,.8,.2,1)' : 'none'; };
+    const apply = () => {
+      img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+    };
+    const clamp = () => {
+      const maxX = (img.clientWidth * (scale - 1)) / 2;
+      const maxY = (img.clientHeight * (scale - 1)) / 2;
+      tx = Math.max(-maxX, Math.min(maxX, tx));
+      ty = Math.max(-maxY, Math.min(maxY, ty));
+    };
+    const reset = () => { smooth(true); scale = 1; tx = 0; ty = 0; apply(); };
+    const zoomTo = (s) => { smooth(true); scale = s; clamp(); apply(); };
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+    img.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      smooth(false);
+      scale = Math.min(5, Math.max(1, scale - e.deltaY * 0.002 * scale));
+      if (scale === 1) { tx = 0; ty = 0; }
+      clamp(); apply();
+    }, { passive: false });
+
+    img.addEventListener('dblclick', (e) => { e.preventDefault(); scale > 1 ? reset() : zoomTo(2.5); });
+
+    img.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        startDist = dist(e.touches); startScale = scale; smooth(false);
+      } else if (e.touches.length === 1) {
+        const now = Date.now();
+        if (now - lastTap < 300) { scale > 1 ? reset() : zoomTo(2.5); }
+        lastTap = now;
+        if (scale > 1) { panning = true; smooth(false); sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+      }
+    }, { passive: true });
+
+    img.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        scale = Math.min(5, Math.max(1, startScale * (dist(e.touches) / (startDist || 1))));
+        if (scale === 1) { tx = 0; ty = 0; }
+        clamp(); apply();
+      } else if (panning && e.touches.length === 1) {
+        e.preventDefault();
+        tx = stx + (e.touches[0].clientX - sx);
+        ty = sty + (e.touches[0].clientY - sy);
+        clamp(); apply();
+      }
+    }, { passive: false });
+
+    img.addEventListener('touchend', (e) => { if (e.touches.length === 0) panning = false; });
+
+    // mouse drag-to-pan (desktop) — listeners added per drag and cleaned up after
+    img.addEventListener('mousedown', (e) => {
+      if (scale <= 1) return;
+      e.preventDefault(); panning = true; smooth(false);
+      sx = e.clientX; sy = e.clientY; stx = tx; sty = ty;
+      img.style.cursor = 'grabbing';
+      const move = (ev) => { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); clamp(); apply(); };
+      const up = () => {
+        panning = false; apply();
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    });
+
+    apply();
+  }
+
+  // If media was auto-deleted (24h privacy clear), show a tidy placeholder
+  // instead of a broken-image icon. Error events don't bubble, so capture them.
+  const GONE_IC = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18M21 15l-5-5M3 5.5A1.5 1.5 0 0 1 4.5 4H17M21 8v9.5a1.5 1.5 0 0 1-1.5 1.5H6"/></svg>';
+  document.addEventListener('error', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'IMG') return;
+    const wrap = t.closest('.bubble.media');
+    if (wrap && !wrap.querySelector('.media-gone')) {
+      t.remove();
+      wrap.insertAdjacentHTML('afterbegin', `<div class="media-gone">${GONE_IC}<span>Photo expired</span></div>`);
+    }
+  }, true);
 
   // ============================================================
   // MESSAGE ACTIONS (react · unsend · copy) — long-press / right-click
@@ -2320,21 +2488,24 @@
   // ============================================================
   // TOASTS
   // ============================================================
+  // Emoji that signal a problem → red toast. Everything else → green.
+  const TOAST_ERR = new Set(['⚠️', '🚫', '🔕', '❌', '⛔', '💔', '🛑']);
   function toast(icon, title, body, onClick) {
+    const isErr = TOAST_ERR.has(icon);
     const el = document.createElement('div');
-    el.className = 'toast';
+    el.className = 'toast ' + (isErr ? 'toast-error' : 'toast-success');
     el.innerHTML = `
-      <div style="font-size:22px">${icon}</div>
-      <div style="min-width:0">
+      <span class="toast-ic">${isErr ? IC.error : IC.success}</span>
+      <div class="toast-text">
         <div class="t-title">${escapeHtml(title)}</div>
-        <div class="t-body">${escapeHtml(body)}</div>
+        ${body ? `<div class="t-body">${escapeHtml(body)}</div>` : ''}
       </div>`;
-    el.addEventListener('click', () => {
-      if (onClick) onClick();
-      el.remove();
-    });
+    const dismiss = () => { el.classList.add('leaving'); setTimeout(() => el.remove(), 360); };
+    el.addEventListener('click', () => { if (onClick) onClick(); dismiss(); });
     $('#toasts').appendChild(el);
-    setTimeout(() => el.remove(), 5000);
+    void el.offsetWidth; // force reflow so the slide-in transition fires reliably
+    el.classList.add('show');
+    setTimeout(dismiss, 3000);
   }
 
   // ============================================================
@@ -2397,6 +2568,12 @@
     tick2: '<svg viewBox="0 0 24 24" width="17" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 6-7.5 11L11 13"/><path d="m15 6-7.5 11L4 13"/></svg>',
     play: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>',
     pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+    eyeOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-3 3.9M6.6 6.6A18.6 18.6 0 0 0 2 11s3.5 7 10 7a10.8 10.8 0 0 0 4.4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></svg>',
+    success: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>',
+    error: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
@@ -2530,8 +2707,8 @@
         <div class="set-section">
           <div class="set-label">Appearance</div>
           <div class="seg">
-            <button data-theme-set="light" class="${curTheme === 'light' ? 'on' : ''}">☀️ Light</button>
-            <button data-theme-set="dark" class="${curTheme === 'dark' ? 'on' : ''}">🌙 Dark</button>
+            <button data-theme-set="light" class="${curTheme === 'light' ? 'on' : ''}">${IC.sun} Light</button>
+            <button data-theme-set="dark" class="${curTheme === 'dark' ? 'on' : ''}">${IC.moon} Dark</button>
           </div>
         </div>
         <div class="set-section">
@@ -2582,7 +2759,7 @@
         return;
       }
       if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }
-      if (e.target.closest('[data-logout]')) { close(); logout(); return; }
+      if (e.target.closest('[data-logout]')) { close(); confirmLogout(); return; }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
     });
   }

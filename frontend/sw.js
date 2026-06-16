@@ -19,8 +19,10 @@ self.addEventListener('push', (event) => {
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       tag: 'tea-message',
-      renotify: true,
-      vibrate: [80, 40, 80],
+      renotify: true,        // re-alert (sound + buzz) for each new message
+      silent: false,         // play the device's notification sound
+      vibrate: [120, 60, 120, 60, 120],
+      requireInteraction: false,
     });
   })());
 });

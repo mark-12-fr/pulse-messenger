@@ -17,7 +17,7 @@ from sqlalchemy import (
     create_engine, select, or_, and_, func, delete,
     Integer, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, Index,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker, mapped_column
+from sqlalchemy.orm import declarative_base, sessionmaker, mapped_column, aliased
 from sqlalchemy.exc import IntegrityError
 
 # ---------------------------------------------------------------------------
@@ -842,45 +842,89 @@ def unread_count(conversation_id, user_id):
 
 
 def list_conversations(me_id):
+    # All data is gathered with a handful of batched queries in ONE session
+    # (instead of several queries per conversation) so the chat list loads fast.
     with session_scope() as s:
-        convs = s.execute(
+        direct = s.execute(
             select(Conversation).where(or_(Conversation.user_a == me_id, Conversation.user_b == me_id))
         ).scalars().all()
-        # groups this user belongs to
         group_convs = s.execute(
             select(Conversation).join(ConversationMember, ConversationMember.conversation_id == Conversation.id)
             .where(ConversationMember.user_id == me_id, Conversation.is_group == True)  # noqa: E712
         ).scalars().all()
-        conv_dicts = [_conv_dict(c) for c in convs] + [_conv_dict(c) for c in group_convs]
+        all_convs = list(direct) + list(group_convs)
+        conv_ids = [c.id for c in all_convs]
+        if not conv_ids:
+            return []
+
+        # pin / mute prefs (1 query)
         prefs = {
-            p.conversation_id: p
+            p.conversation_id: {"pinned": bool(p.pinned), "muted": bool(p.muted)}
             for p in s.execute(
                 select(ConversationPref).where(ConversationPref.user_id == me_id)
             ).scalars().all()
         }
-        prefs = {cid: {"pinned": bool(p.pinned), "muted": bool(p.muted)} for cid, p in prefs.items()}
 
-    result = []
-    for conv in conv_dicts:
-        last = get_last_message(conv["id"])
-        is_group = conv.get("is_group")
-        if not last and not is_group:
-            continue  # hide empty 1-to-1 conversations
-        pref = prefs.get(conv["id"], {})
-        entry = {
-            "id": conv["id"],
-            "isGroup": bool(is_group),
-            "lastMessage": last,
-            "unread": unread_count(conv["id"], me_id),
-            "pinned": bool(pref.get("pinned")),
-            "muted": bool(pref.get("muted")),
-            "_sort": (last["createdAt"] if last else conv.get("created_at")) or "",
+        # last message per conversation (1 query, DISTINCT ON)
+        last_by_conv = {
+            m.conversation_id: m
+            for m in s.execute(
+                select(Message).where(Message.conversation_id.in_(conv_ids))
+                .order_by(Message.conversation_id, Message.id.desc())
+                .distinct(Message.conversation_id)
+            ).scalars().all()
         }
-        if is_group:
-            entry["group"] = public_conversation_meta(conv, me_id)
-        else:
-            entry["friend"] = get_user_by_id(conversation_partner_id(conv, me_id))
-        result.append(entry)
+
+        # unread count per conversation for me (1 query, joined to my read marker)
+        mr = aliased(MessageRead)
+        unread_by_conv = {
+            cid: int(cnt)
+            for cid, cnt in s.execute(
+                select(Message.conversation_id, func.count(Message.id))
+                .join(mr, and_(mr.conversation_id == Message.conversation_id, mr.user_id == me_id), isouter=True)
+                .where(
+                    Message.conversation_id.in_(conv_ids),
+                    Message.sender_id != me_id,
+                    Message.id > func.coalesce(mr.last_read_message_id, 0),
+                )
+                .group_by(Message.conversation_id)
+            ).all()
+        }
+
+        # partner users for 1-to-1 chats (1 query)
+        partner_ids = [conversation_partner_id(_conv_dict(c), me_id) for c in direct]
+        users_by_id = {
+            u.id: public_user(u)
+            for u in s.execute(
+                select(User).where(User.id.in_([p for p in partner_ids if p]))
+            ).scalars().all()
+        }
+
+        result = []
+        for c in all_convs:
+            conv = _conv_dict(c)
+            cid = conv["id"]
+            is_group = conv.get("is_group")
+            m = last_by_conv.get(cid)
+            last = public_message(m) if m else None
+            if not last and not is_group:
+                continue  # hide empty 1-to-1 conversations
+            pref = prefs.get(cid, {})
+            entry = {
+                "id": cid,
+                "isGroup": bool(is_group),
+                "lastMessage": last,
+                "unread": unread_by_conv.get(cid, 0),
+                "pinned": bool(pref.get("pinned")),
+                "muted": bool(pref.get("muted")),
+                "_sort": (last["createdAt"] if last else conv.get("created_at")) or "",
+            }
+            if is_group:
+                entry["group"] = public_conversation_meta(conv, me_id)
+            else:
+                entry["friend"] = users_by_id.get(conversation_partner_id(conv, me_id))
+            result.append(entry)
+
     # pinned conversations float to the top, then most-recent first
     result.sort(key=lambda x: (x["pinned"], x["_sort"]), reverse=True)
     for e in result:
