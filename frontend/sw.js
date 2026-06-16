@@ -1,7 +1,41 @@
-/* Tea service worker — shows push notifications even when the app is closed.
-   The payload never contains the message text (privacy): just "X sent you a message". */
+/* Tea service worker — keeps the app fresh and shows push notifications.
+   The push payload never contains the message text (privacy): just "X sent you a message". */
+const SHELL = 'tea-shell-v2';
+
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    // drop stale caches from older versions
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== SHELL).map((k) => caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
+
+// Network-first for our OWN static files (index.html, styles.css, app.js, …) so a
+// new deploy is never stuck behind a stale cache. Falls back to cache only when
+// offline. Cross-origin requests (API, CDNs, sockets) are left completely alone.
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  let url;
+  try { url = new URL(req.url); } catch (e) { return; }
+  if (url.origin !== self.location.origin) return;
+  event.respondWith((async () => {
+    try {
+      const fresh = await fetch(req, { cache: 'no-cache' });
+      if (fresh && fresh.ok && fresh.type === 'basic') {
+        const copy = fresh.clone();
+        caches.open(SHELL).then((c) => c.put(req, copy)).catch(() => {});
+      }
+      return fresh;
+    } catch (e) {
+      const cached = await caches.match(req);
+      return cached || Response.error();
+    }
+  })());
+});
 
 self.addEventListener('push', (event) => {
   let data = {};
