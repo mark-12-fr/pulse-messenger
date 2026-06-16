@@ -165,6 +165,13 @@ def emit_to_user(uid, event, data):
     socketio.emit(event, data, room=f"user:{uid}")
 
 
+def emit_conv(conv, event, data, exclude=None):
+    """Emit to everyone in a conversation (both 1-to-1 parties or all group members)."""
+    for mid in db.conversation_member_ids(conv):
+        if mid and mid != exclude:
+            emit_to_user(mid, event, data)
+
+
 def broadcast_presence(uid, up):
     me = db.get_user_by_id(uid)
     last_seen = me["lastSeen"] if me else None
@@ -436,16 +443,21 @@ def conversation_messages(cid):
     if not db.is_conversation_member(conv, me_id):
         return jsonify(error="Conversation not found."), 404
 
-    partner_id = db.conversation_partner_id(conv, me_id)
-    partner = db.get_user_by_id(partner_id)
     messages = db.get_messages(cid)
-
     if messages:
         last_id = messages[-1]["id"]
         db.mark_read(cid, me_id, last_id)
-        emit_to_user(partner_id, "message:read",
-                     {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": last_id})
 
+    # --- group conversation ---
+    if conv.get("is_group"):
+        return jsonify(messages=messages, group=db.public_conversation_meta(conv, me_id))
+
+    # --- 1-to-1 conversation ---
+    partner_id = db.conversation_partner_id(conv, me_id)
+    partner = db.get_user_by_id(partner_id)
+    if messages:
+        emit_to_user(partner_id, "message:read",
+                     {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": messages[-1]["id"]})
     return jsonify(
         messages=messages,
         friend={**partner, "online": is_online(partner_id),
@@ -454,6 +466,109 @@ def conversation_messages(cid):
         partnerLastRead=db.get_last_read(cid, partner_id),
         partnerLastDelivered=db.get_last_delivered(cid, partner_id),
     )
+
+
+# ---------------------------------------------------------------------------
+# Group chats
+# ---------------------------------------------------------------------------
+def _group_entry(conv, me_id):
+    return {
+        "id": conv["id"], "isGroup": True,
+        "group": db.public_conversation_meta(conv, me_id),
+        "lastMessage": None, "unread": 0, "pinned": False, "muted": False,
+    }
+
+
+@app.post("/api/groups")
+@auth_required
+def create_group():
+    me_id = g.user["id"]
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip()
+    member_ids = data.get("memberIds") or []
+    try:
+        member_ids = [int(x) for x in member_ids]
+    except (ValueError, TypeError):
+        return jsonify(error="Invalid members."), 400
+    friend_ids = {f["id"] for f in db.list_friends(me_id)}
+    member_ids = [m for m in member_ids if m in friend_ids]
+    if len(member_ids) < 2:
+        return jsonify(error="Pick at least 2 friends for a group."), 400
+    conv = db.create_group(me_id, name, member_ids)
+    # tell every member (including me) so their chat list gains the group
+    for mid in db.conversation_member_ids(conv):
+        emit_to_user(mid, "conversation:new", {"conversation": _group_entry(conv, mid)})
+    return jsonify(conversation=_group_entry(conv, me_id))
+
+
+@app.post("/api/groups/<int:cid>/rename")
+@auth_required
+def rename_group(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Group not found."), 404
+    name = str((request.get_json(silent=True) or {}).get("name") or "").strip()
+    if not name:
+        return jsonify(error="Name required."), 400
+    db.update_group(cid, name=name)
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    return jsonify(ok=True, group=meta)
+
+
+@app.post("/api/groups/<int:cid>/photo")
+@auth_required
+def group_photo(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Group not found."), 404
+    data = request.get_json(silent=True) or {}
+    db.update_group(cid, avatar_url=data.get("avatarUrl"), set_avatar=True)
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    return jsonify(ok=True, group=meta)
+
+
+@app.post("/api/groups/<int:cid>/members")
+@auth_required
+def add_members(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Group not found."), 404
+    data = request.get_json(silent=True) or {}
+    try:
+        ids = [int(x) for x in (data.get("memberIds") or [])]
+    except (ValueError, TypeError):
+        return jsonify(error="Invalid members."), 400
+    friend_ids = {f["id"] for f in db.list_friends(me_id)}
+    ids = [i for i in ids if i in friend_ids]
+    added = db.add_group_members(cid, ids)
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    for mid in added:
+        emit_to_user(mid, "conversation:new", {"conversation": _group_entry(conv, mid)})
+    return jsonify(ok=True, group=meta)
+
+
+@app.post("/api/groups/<int:cid>/leave")
+@auth_required
+def leave_group(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Group not found."), 404
+    db.remove_group_member(cid, me_id)
+    emit_to_user(me_id, "group:removed", {"conversationId": cid})
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    return jsonify(ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -592,22 +707,34 @@ def on_message_send(payload):
         return {"error": "Not authenticated."}
     payload = payload or {}
     to_user_id = int(payload.get("toUserId") or 0)
+    conv_id = int(payload.get("conversationId") or 0)
     body = str(payload.get("body") or "")[:5000]
     attachment = payload.get("attachment")
     reply_to_id = int(payload.get("replyToId") or 0) or None
 
-    if not to_user_id:
-        return {"error": "Missing recipient."}
     if not body and not attachment:
         return {"error": "Empty message."}
 
-    fr = db.find_friendship(uid, to_user_id)
-    if not fr or fr["status"] != "accepted":
-        return {"error": "You can only message your friends."}
-    if db.is_blocked_either(uid, to_user_id):
-        return {"error": "You can't message this person."}
+    sender = db.get_user_by_id(uid)
 
-    conv = db.get_or_create_conversation(uid, to_user_id)
+    # --- group message (client passes conversationId of a group) ---
+    if conv_id:
+        conv = db.get_conversation_by_id(conv_id)
+        if not conv or not conv.get("is_group"):
+            return {"error": "Conversation not found."}
+        if not db.is_conversation_member(conv, uid):
+            return {"error": "You are not in this group."}
+    else:
+        # --- 1-to-1 message ---
+        if not to_user_id:
+            return {"error": "Missing recipient."}
+        fr = db.find_friendship(uid, to_user_id)
+        if not fr or fr["status"] != "accepted":
+            return {"error": "You can only message your friends."}
+        if db.is_blocked_either(uid, to_user_id):
+            return {"error": "You can't message this person."}
+        conv = db.get_or_create_conversation(uid, to_user_id)
+
     if reply_to_id:
         rmeta = db.get_message_meta(reply_to_id)
         if not rmeta or rmeta["conversationId"] != conv["id"]:
@@ -621,18 +748,22 @@ def on_message_send(payload):
     )
     db.mark_read(conv["id"], uid, msg["id"])
 
-    sender = db.get_user_by_id(uid)
-    recipient = db.get_user_by_id(to_user_id)
-    envelope = {"message": msg, "participants": {str(uid): sender, str(to_user_id): recipient}}
+    is_group = bool(conv.get("is_group"))
+    envelope = {"message": msg, "conversationId": conv["id"], "isGroup": is_group, "sender": sender}
+    if not is_group:
+        recipient = db.get_user_by_id(db.conversation_partner_id(conv, uid))
+        envelope["participants"] = {str(uid): sender, str(recipient["id"]): recipient}
 
-    emit_to_user(uid, "message:new", envelope)
-    emit_to_user(to_user_id, "message:new", envelope)
-    # Push only when the recipient isn't actively using the app in the foreground.
-    # They still get notified when backgrounded, at the home screen, or phone closed
-    # (iPhone or Android) — but never pinged mid-conversation.
-    if not is_active(to_user_id) and not db.is_muted(to_user_id, conv["id"]):
-        socketio.start_background_task(push.send_to_user, to_user_id,
-                                       sender["displayName"], "Sent you a message")
+    emit_conv(conv, "message:new", envelope)
+
+    # Push to recipients who aren't actively in the app and haven't muted this chat.
+    title = (conv.get("name") or "Group") if is_group else sender["displayName"]
+    bodytext = (f"{sender['displayName']}: " + (msg.get("body") or "sent a message")) if is_group else "Sent you a message"
+    for mid in db.conversation_member_ids(conv):
+        if not mid or mid == uid:
+            continue
+        if not is_active(mid) and not db.is_muted(mid, conv["id"]):
+            socketio.start_background_task(push.send_to_user, mid, title, bodytext[:120])
     return {"ok": True, "message": msg}
 
 
@@ -642,18 +773,26 @@ def on_typing(payload):
     if not uid:
         return
     payload = payload or {}
+    conv_id = int(payload.get("conversationId") or 0)
     to_user_id = int(payload.get("toUserId") or 0)
-    if not to_user_id:
+    if conv_id:
+        conv = db.get_conversation_by_id(conv_id)
+        if not db.is_conversation_member(conv, uid):
+            return
+    elif to_user_id:
+        fr = db.find_friendship(uid, to_user_id)
+        if not fr or fr["status"] != "accepted":
+            return
+        conv = db.get_or_create_conversation(uid, to_user_id)
+    else:
         return
-    fr = db.find_friendship(uid, to_user_id)
-    if not fr or fr["status"] != "accepted":
-        return
-    conv = db.get_or_create_conversation(uid, to_user_id)
-    emit_to_user(to_user_id, "typing", {
+    me = db.get_user_by_id(uid)
+    emit_conv(conv, "typing", {
         "conversationId": conv["id"],
         "fromUserId": uid,
+        "fromName": me["displayName"] if me else "",
         "isTyping": bool(payload.get("isTyping")),
-    })
+    }, exclude=uid)
 
 
 @socketio.on("message:read")
@@ -670,11 +809,13 @@ def on_message_read(payload):
     if not last:
         return
     db.mark_read(cid, uid, last["id"])
-    partner_id = db.conversation_partner_id(conv, uid)
     # Reading implies delivered too — keep the delivered marker in step.
     db.mark_conversation_delivered(cid, uid)
-    emit_to_user(partner_id, "message:read",
-                 {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})
+    # Per-message seen ticks are only shown in 1-to-1 chats.
+    if not conv.get("is_group"):
+        partner_id = db.conversation_partner_id(conv, uid)
+        emit_to_user(partner_id, "message:read",
+                     {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})
 
 
 @socketio.on("message:delivered")
@@ -689,7 +830,7 @@ def on_message_delivered(payload):
     if not db.is_conversation_member(conv, uid):
         return
     last_id = db.mark_conversation_delivered(cid, uid)
-    if not last_id:
+    if not last_id or conv.get("is_group"):
         return
     partner_id = db.conversation_partner_id(conv, uid)
     emit_to_user(partner_id, "message:delivered",
@@ -717,8 +858,7 @@ def on_message_react(payload):
         return {"error": "Not allowed."}
     reactions = db.toggle_reaction(message_id, uid, emoji)
     data = {"messageId": message_id, "conversationId": meta["conversationId"], "reactions": reactions}
-    emit_to_user(uid, "message:reaction", data)
-    emit_to_user(db.conversation_partner_id(conv, uid), "message:reaction", data)
+    emit_conv(conv, "message:reaction", data)
     return {"ok": True, "reactions": reactions}
 
 
@@ -740,8 +880,7 @@ def on_message_edit(payload):
     db.edit_message(message_id, body)
     conv = db.get_conversation_by_id(meta["conversationId"])
     data = {"messageId": message_id, "conversationId": meta["conversationId"], "body": body, "edited": True}
-    emit_to_user(uid, "message:edited", data)
-    emit_to_user(db.conversation_partner_id(conv, uid), "message:edited", data)
+    emit_conv(conv, "message:edited", data)
     return {"ok": True}
 
 
@@ -760,8 +899,7 @@ def on_message_delete(payload):
     conv = db.get_conversation_by_id(meta["conversationId"])
     db.unsend_message(message_id)
     data = {"messageId": message_id, "conversationId": meta["conversationId"]}
-    emit_to_user(uid, "message:unsent", data)
-    emit_to_user(db.conversation_partner_id(conv, uid), "message:unsent", data)
+    emit_conv(conv, "message:unsent", data)
     return {"ok": True}
 
 
@@ -776,10 +914,8 @@ def on_conversation_delete(payload):
     if not db.is_conversation_member(conv, uid):
         return {"error": "Not allowed."}
     db.delete_conversation_messages(cid)
-    partner_id = db.conversation_partner_id(conv, uid)
     data = {"conversationId": cid}
-    emit_to_user(uid, "conversation:cleared", data)
-    emit_to_user(partner_id, "conversation:cleared", data)
+    emit_conv(conv, "conversation:cleared", data)
     return {"ok": True}
 
 

@@ -93,10 +93,22 @@ class Friendship(Base):
 class Conversation(Base):
     __tablename__ = "conversations"
     id = mapped_column(Integer, primary_key=True)
-    user_a = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)  # smaller id
-    user_b = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)  # larger id
+    user_a = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # smaller id (1-to-1 only)
+    user_b = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # larger id (1-to-1 only)
+    is_group = mapped_column(Boolean, nullable=False, default=False)
+    name = mapped_column(Text, nullable=True)            # group name
+    avatar_url = mapped_column(Text, nullable=True)      # group photo
+    avatar_color = mapped_column(String(16), nullable=True)
+    owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("user_a", "user_b", name="uq_conv_pair"),)
+
+
+class ConversationMember(Base):
+    __tablename__ = "conversation_members"
+    conversation_id = mapped_column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    joined_at = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class Message(Base):
@@ -444,7 +456,12 @@ def relationship(me_id, other_id):
 def _conv_dict(c):
     if not c:
         return None
-    return {"id": c.id, "user_a": c.user_a, "user_b": c.user_b}
+    return {
+        "id": c.id, "user_a": c.user_a, "user_b": c.user_b,
+        "is_group": bool(c.is_group), "name": c.name,
+        "avatar_url": c.avatar_url, "avatar_color": c.avatar_color,
+        "owner_id": c.owner_id, "created_at": _iso(c.created_at),
+    }
 
 
 def get_or_create_conversation(u1, u2):
@@ -469,13 +486,117 @@ def get_conversation_by_id(cid):
 
 
 def conversation_partner_id(conv, me_id):
-    if not conv:
+    if not conv or conv.get("is_group"):
         return None
     return conv["user_b"] if conv["user_a"] == me_id else conv["user_a"]
 
 
+def conversation_member_ids(conv):
+    """All user ids that should receive events for this conversation."""
+    if not conv:
+        return []
+    if conv.get("is_group"):
+        with session_scope() as s:
+            rows = s.execute(
+                select(ConversationMember.user_id).where(
+                    ConversationMember.conversation_id == conv["id"]
+                )
+            ).scalars().all()
+            return list(rows)
+    return [conv["user_a"], conv["user_b"]]
+
+
 def is_conversation_member(conv, uid):
-    return bool(conv) and (conv["user_a"] == uid or conv["user_b"] == uid)
+    if not conv:
+        return False
+    if conv.get("is_group"):
+        with session_scope() as s:
+            row = s.get(ConversationMember, (conv["id"], uid))
+            return row is not None
+    return conv["user_a"] == uid or conv["user_b"] == uid
+
+
+# ---------------------------------------------------------------------------
+# Group conversations
+# ---------------------------------------------------------------------------
+def create_group(owner_id, name, member_ids):
+    name = (name or "").strip()[:60] or "Group"
+    ids = [owner_id] + [int(i) for i in member_ids if int(i) != owner_id]
+    ids = list(dict.fromkeys(ids))  # de-dupe, keep order
+    with session_scope() as s:
+        c = Conversation(is_group=True, name=name, owner_id=owner_id,
+                         avatar_color=_pick_color(name), created_at=now_utc())
+        s.add(c)
+        s.flush()
+        for uid in ids:
+            s.add(ConversationMember(conversation_id=c.id, user_id=uid, joined_at=now_utc()))
+        s.flush()
+        return _conv_dict(c)
+
+
+def _pick_color(seed):
+    palette = ["#0a7cff", "#7c4dff", "#ff4d8d", "#ff7a00", "#00b894", "#e84393", "#0984e3", "#6c5ce7"]
+    h = sum(ord(ch) for ch in (seed or "G"))
+    return palette[h % len(palette)]
+
+
+def group_member_users(conversation_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(User).join(ConversationMember, ConversationMember.user_id == User.id)
+            .where(ConversationMember.conversation_id == conversation_id)
+            .order_by(User.display_name)
+        ).scalars().all()
+        return [public_user(u) for u in rows]
+
+
+def add_group_members(conversation_id, member_ids):
+    added = []
+    with session_scope() as s:
+        for uid in member_ids:
+            uid = int(uid)
+            if not s.get(ConversationMember, (conversation_id, uid)):
+                s.add(ConversationMember(conversation_id=conversation_id, user_id=uid, joined_at=now_utc()))
+                added.append(uid)
+    return added
+
+
+def remove_group_member(conversation_id, user_id):
+    with session_scope() as s:
+        s.execute(delete(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == user_id,
+        ))
+
+
+def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False):
+    with session_scope() as s:
+        c = s.get(Conversation, conversation_id)
+        if not c or not c.is_group:
+            return None
+        if name is not None:
+            c.name = name.strip()[:60] or c.name
+        if set_avatar:
+            c.avatar_url = avatar_url or None
+        s.flush()
+        return _conv_dict(c)
+
+
+def public_conversation_meta(conv, me_id):
+    """Serialize a group's display info for the client."""
+    if not conv or not conv.get("is_group"):
+        return None
+    members = group_member_users(conv["id"])
+    return {
+        "id": conv["id"],
+        "isGroup": True,
+        "name": conv["name"],
+        "avatarUrl": conv["avatar_url"],
+        "avatarColor": conv["avatar_color"] or "#0a7cff",
+        "ownerId": conv["owner_id"],
+        "members": members,
+        "memberCount": len(members),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +846,12 @@ def list_conversations(me_id):
         convs = s.execute(
             select(Conversation).where(or_(Conversation.user_a == me_id, Conversation.user_b == me_id))
         ).scalars().all()
-        conv_dicts = [_conv_dict(c) for c in convs]
+        # groups this user belongs to
+        group_convs = s.execute(
+            select(Conversation).join(ConversationMember, ConversationMember.conversation_id == Conversation.id)
+            .where(ConversationMember.user_id == me_id, Conversation.is_group == True)  # noqa: E712
+        ).scalars().all()
+        conv_dicts = [_conv_dict(c) for c in convs] + [_conv_dict(c) for c in group_convs]
         prefs = {
             p.conversation_id: p
             for p in s.execute(
@@ -736,22 +862,29 @@ def list_conversations(me_id):
 
     result = []
     for conv in conv_dicts:
-        partner_id = conversation_partner_id(conv, me_id)
-        partner = get_user_by_id(partner_id)
         last = get_last_message(conv["id"])
-        if not last:
-            continue  # hide empty conversations
+        is_group = conv.get("is_group")
+        if not last and not is_group:
+            continue  # hide empty 1-to-1 conversations
         pref = prefs.get(conv["id"], {})
-        result.append({
+        entry = {
             "id": conv["id"],
-            "friend": partner,
+            "isGroup": bool(is_group),
             "lastMessage": last,
             "unread": unread_count(conv["id"], me_id),
             "pinned": bool(pref.get("pinned")),
             "muted": bool(pref.get("muted")),
-        })
+            "_sort": (last["createdAt"] if last else conv.get("created_at")) or "",
+        }
+        if is_group:
+            entry["group"] = public_conversation_meta(conv, me_id)
+        else:
+            entry["friend"] = get_user_by_id(conversation_partner_id(conv, me_id))
+        result.append(entry)
     # pinned conversations float to the top, then most-recent first
-    result.sort(key=lambda x: (x["pinned"], x["lastMessage"]["createdAt"] or ""), reverse=True)
+    result.sort(key=lambda x: (x["pinned"], x["_sort"]), reverse=True)
+    for e in result:
+        e.pop("_sort", None)
     return result
 
 

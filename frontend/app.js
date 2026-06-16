@@ -268,6 +268,9 @@
     socket.on('message:unsent', onMessageUnsent);
     socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
+    socket.on('conversation:new', onConversationNew);
+    socket.on('group:updated', onGroupUpdated);
+    socket.on('group:removed', onGroupRemoved);
     socket.on('friend:removed', onFriendRemoved);
     socket.on('user:blocked', (p) => onPeerBlock(p.userId, true));
     socket.on('user:unblocked', (p) => onPeerBlock(p.userId, false));
@@ -315,15 +318,34 @@
     updateReqBadge();
   }
 
-  function previewText(msg) {
-    if (!msg) return '';
-    if (msg.unsent) return msg.senderId === state.me.id ? 'You unsent a message' : 'Unsent a message';
-    const mine = msg.senderId === state.me.id ? 'You: ' : '';
-    if (msg.attachmentType === 'image') return mine + '📷 Photo';
-    if (msg.attachmentType === 'video') return mine + '🎥 Video';
-    if (msg.attachmentType === 'audio') return mine + '🎤 Voice message';
-    if (msg.attachmentType === 'file') return mine + '📎 ' + (msg.attachmentName || 'File');
-    return mine + (msg.body || '');
+  // A display object usable by avatarHtml for either a friend or a group.
+  function convAvatar(c) {
+    if (c.isGroup) {
+      const gr = c.group || {};
+      return { displayName: gr.name || 'Group', avatarColor: gr.avatarColor, avatarUrl: gr.avatarUrl };
+    }
+    return state.friends.get(c.friend.id) || c.friend;
+  }
+  function convTitle(c) {
+    if (c.isGroup) return (c.group && c.group.name) || 'Group';
+    const f = state.friends.get(c.friend.id) || c.friend;
+    return friendName(f);
+  }
+  function senderFirstName(conv, senderId) {
+    const m = (conv.group && conv.group.members || []).find((u) => u.id === senderId);
+    return m ? String(m.displayName || '').split(/\s+/)[0] : 'Someone';
+  }
+
+  function previewText(msg, conv) {
+    if (!msg) return conv && conv.isGroup ? 'No messages yet' : '';
+    const isGroup = conv && conv.isGroup;
+    let who = msg.senderId === state.me.id ? 'You: ' : (isGroup ? senderFirstName(conv, msg.senderId) + ': ' : '');
+    if (msg.unsent) return (msg.senderId === state.me.id ? 'You' : (isGroup ? senderFirstName(conv, msg.senderId) : '')) + ' unsent a message';
+    if (msg.attachmentType === 'image') return who + '📷 Photo';
+    if (msg.attachmentType === 'video') return who + '🎥 Video';
+    if (msg.attachmentType === 'audio') return who + '🎤 Voice message';
+    if (msg.attachmentType === 'file') return who + '📎 ' + (msg.attachmentName || 'File');
+    return who + (msg.body || '');
   }
 
   function renderChats() {
@@ -338,18 +360,21 @@
     }
     box.innerHTML = convs
       .map((c) => {
-        const f = state.friends.get(c.friend.id) || c.friend;
+        const isG = !!c.isGroup;
+        const au = convAvatar(c);
+        const online = isG ? false : !!(state.friends.get(c.friend.id) || c.friend).online;
         const active = state.current && state.current.conversationId === c.id;
+        const dotOpt = isG ? {} : { dot: online };
         return `
-        <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" data-open-conv="${c.id}" data-peer="${f.id}">
-          ${avatarHtml(f, { dot: !!f.online })}
+        <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" data-open-conv="${c.id}" data-peer="${isG ? '' : (state.friends.get(c.friend.id) || c.friend).id}" data-group="${isG ? '1' : ''}">
+          ${isG ? `<span class="av-wrap">${avatarHtml(au, dotOpt)}<span class="grp-badge">👥</span></span>` : avatarHtml(au, dotOpt)}
           <div class="row-main">
             <div class="row-top">
-              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(friendName(f))}</span>
+              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(convTitle(c))}</span>
               <span class="row-time">${c.muted ? '<span class="row-mute">🔕</span>' : ''}${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
             </div>
             <div class="row-top">
-              <span class="row-sub">${escapeHtml(previewText(c.lastMessage))}</span>
+              <span class="row-sub">${escapeHtml(previewText(c.lastMessage, c))}</span>
               ${c.unread ? `<span class="row-badge ${c.muted ? 'muted' : ''}">${c.unread}</span>` : ''}
             </div>
           </div>
@@ -572,7 +597,10 @@
     if (openPeer) return openConversationByPeer(Number(openPeer.dataset.openConvPeer));
 
     const openRow = e.target.closest('[data-open-conv]');
-    if (openRow) return openConversation(Number(openRow.dataset.openConv), Number(openRow.dataset.peer));
+    if (openRow) {
+      if (openRow.dataset.group === '1') return openGroup(Number(openRow.dataset.openConv));
+      return openConversation(Number(openRow.dataset.openConv), Number(openRow.dataset.peer));
+    }
   });
 
   // ============================================================
@@ -636,6 +664,71 @@
     renderFriends();
   }
 
+  async function openGroup(cid) {
+    const conv = state.conversations.get(cid);
+    if (recState) cancelVoiceRecording();
+    state.current = { conversationId: cid, isGroup: true, group: (conv && conv.group) || { id: cid, name: 'Group', members: [] } };
+    $('#typing-row').classList.remove('show');
+    clearTimeout(state.peerTypingTimer);
+    clearAttachment();
+    cancelReply();
+    cancelEdit();
+    msgInput.value = '';
+    msgInput.style.height = 'auto';
+    refreshSendState();
+    setComposerBlocked(null); // groups can't be blocked — make sure composer shows
+
+    $('#chat-empty').classList.add('hidden');
+    $('#chat-active').classList.remove('hidden');
+    appScreen.classList.add('in-chat');
+    renderGroupHeader(state.current.group);
+    $('#messages').innerHTML = `<div class="empty-note">Loading…</div>`;
+
+    try {
+      const data = await api('/api/conversations/' + cid + '/messages');
+      state.messages = data.messages;
+      state.partnerLastRead = 0;
+      state.partnerLastDelivered = 0;
+      if (data.group) {
+        state.current.group = data.group;
+        if (conv) conv.group = data.group;
+        renderGroupHeader(data.group);
+      }
+      renderMessages();
+      if (conv) { conv.unread = 0; }
+    } catch (e) {
+      $('#messages').innerHTML = `<div class="empty-note">Could not load messages.</div>`;
+    }
+    renderChats();
+  }
+
+  function renderGroupHeader(group) {
+    const au = { displayName: group.name || 'Group', avatarColor: group.avatarColor, avatarUrl: group.avatarUrl };
+    $('#peer-avatar').outerHTML = avatarHtml(au).replace('class="avatar', 'id="peer-avatar" class="avatar');
+    $('#peer-name').textContent = group.name || 'Group';
+    const status = $('#peer-status');
+    const n = group.memberCount || (group.members || []).length || 0;
+    status.textContent = n + (n === 1 ? ' member' : ' members');
+    status.classList.remove('online');
+  }
+
+  // The user object behind a message's sender (me, the 1-to-1 peer, or a group member).
+  function msgSenderUser(m) {
+    if (m.senderId === state.me.id) return state.me;
+    if (state.current && state.current.isGroup) {
+      return (state.current.group.members || []).find((u) => u.id === m.senderId) || { displayName: '?', avatarColor: '#8a8f98' };
+    }
+    return (state.current && state.current.peer) || { displayName: '?', avatarColor: '#8a8f98' };
+  }
+
+  // In a group, label the first message of each incoming run with the sender's name.
+  function groupSenderLabel(m, out, grouped) {
+    if (!state.current || !state.current.isGroup || out || grouped) return '';
+    const u = msgSenderUser(m);
+    const color = u.avatarColor || '#8a8f98';
+    return `<span class="grp-sender" style="color:${color}">${escapeHtml(String(u.displayName || '').split(/\s+/)[0])}</span>`;
+  }
+
   function updatePeerStatus() {
     const peer = state.current && state.current.peer;
     if (!peer) return;
@@ -664,12 +757,11 @@
       }
       const out = m.senderId === state.me.id;
       const grouped = prevSender === m.senderId;
-      const peer = state.current.peer;
-      const avatar = avatarHtml(out ? state.me : peer, { cls: 'm-avatar' });
+      const avatar = avatarHtml(out ? state.me : msgSenderUser(m), { cls: 'm-avatar' });
       html += `
         <div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'}" data-mid="${m.id}">
           ${avatar}
-          ${renderBubble(m)}
+          ${renderBubble(m, groupSenderLabel(m, out, grouped))}
         </div>`;
       prevSender = m.senderId;
     });
@@ -685,6 +777,7 @@
     const box = $('#messages');
     const old = box.querySelector('.seen-row');
     if (old) old.remove();
+    if (state.current && state.current.isGroup) return; // groups don't show a Seen row
     if (!state.messages.length) return;
     const last = state.messages[state.messages.length - 1];
     if (last && last.senderId === state.me.id && (state.partnerLastRead || 0) >= last.id) {
@@ -694,6 +787,7 @@
 
   // Delivery state for one of MY messages: sent (✓) · delivered (✓✓) · seen (✓✓ accent)
   function tickState(m) {
+    if (state.current && state.current.isGroup) return null; // no per-member ticks in groups
     if (m.senderId !== state.me.id || m.unsent) return null;
     if ((state.partnerLastRead || 0) >= m.id) return 'seen';
     if ((state.partnerLastDelivered || 0) >= m.id) return 'delivered';
@@ -732,8 +826,8 @@
     if (d !== prevD) html += `<div class="day-sep">${d}</div>`;
     const out = m.senderId === state.me.id;
     const grouped = !!prev && prevD === d && prev.senderId === m.senderId;
-    const avatar = avatarHtml(out ? state.me : state.current.peer, { cls: 'm-avatar' });
-    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new" data-mid="${m.id}">${avatar}${renderBubble(m)}</div>`;
+    const avatar = avatarHtml(out ? state.me : msgSenderUser(m), { cls: 'm-avatar' });
+    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new" data-mid="${m.id}">${avatar}${renderBubble(m, groupSenderLabel(m, out, grouped))}</div>`;
     box.insertAdjacentHTML('beforeend', html);
     updateSeenRow();
     bindVoicePlayers();
@@ -752,14 +846,23 @@
 
   function replyQuoteHtml(m) {
     if (!m.replyTo) return '';
-    const who = m.replyTo.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || '');
+    let who = 'You';
+    if (m.replyTo.senderId !== state.me.id) {
+      if (state.current && state.current.isGroup) {
+        const u = (state.current.group.members || []).find((x) => x.id === m.replyTo.senderId);
+        who = u ? String(u.displayName || '').split(/\s+/)[0] : '';
+      } else {
+        who = (state.current && state.current.peer && state.current.peer.displayName) || '';
+      }
+    }
     return `<div class="reply-quote"><span class="rq-who">${escapeHtml(who)}</span> ${escapeHtml(m.replyTo.preview)}</div>`;
   }
 
-  function renderBubble(m) {
+  function renderBubble(m, senderLabel) {
+    senderLabel = senderLabel || '';
     if (m.unsent) {
-      const name = m.senderId === state.me.id ? 'You' : ((state.current && state.current.peer && state.current.peer.displayName) || 'They');
-      return `<div class="bwrap"><div class="bubble unsent">🚫 ${escapeHtml(name)} unsent a message</div></div>`;
+      const name = m.senderId === state.me.id ? 'You' : escapeHtml(String(msgSenderUser(m).displayName || 'They').split(/\s+/)[0]);
+      return `<div class="bwrap">${senderLabel}<div class="bubble unsent">🚫 ${name} unsent a message</div></div>`;
     }
     const t = `<span class="m-time">${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}${tickHtml(m)}</span>`;
     const rx = reactionsHtml(m);
@@ -780,7 +883,7 @@
     } else {
       inner = `<div class="bubble">${escapeHtml(m.body)}</div>`;
     }
-    return `<div class="bwrap">${replyQuoteHtml(m)}${inner}${rx}${t}</div>`;
+    return `<div class="bwrap">${senderLabel}${replyQuoteHtml(m)}${inner}${rx}${t}</div>`;
   }
 
   // ---------- back button (mobile) ----------
@@ -836,16 +939,25 @@
     else sendMessage();
   });
 
+  // Where a new message/typing event should be routed: a group (conversationId)
+  // or a 1-to-1 chat (toUserId).
+  function sendTarget() {
+    if (!state.current) return null;
+    return state.current.isGroup
+      ? { conversationId: state.current.conversationId }
+      : { toUserId: state.current.peer.id };
+  }
+
   function emitTyping() {
     if (!state.current || !state.socket) return;
-    const toUserId = state.current.peer.id;
+    const t = sendTarget();
     if (!state.isTypingSent) {
-      state.socket.emit('typing', { toUserId, isTyping: true });
+      state.socket.emit('typing', { ...t, isTyping: true });
       state.isTypingSent = true;
     }
     clearTimeout(state.sendTypingTimer);
     state.sendTypingTimer = setTimeout(() => {
-      state.socket.emit('typing', { toUserId, isTyping: false });
+      state.socket.emit('typing', { ...t, isTyping: false });
       state.isTypingSent = false;
     }, 1500);
   }
@@ -853,7 +965,7 @@
     if (!state.current || !state.socket) return;
     clearTimeout(state.sendTypingTimer);
     if (state.isTypingSent) {
-      state.socket.emit('typing', { toUserId: state.current.peer.id, isTyping: false });
+      state.socket.emit('typing', { ...sendTarget(), isTyping: false });
       state.isTypingSent = false;
     }
   }
@@ -876,7 +988,7 @@
     state.socket.emit(
       'message:send',
       {
-        toUserId: state.current.peer.id,
+        ...sendTarget(),
         body,
         attachment: state.attachment,
         replyToId: state.replyTo ? state.replyTo.id : null,
@@ -1049,7 +1161,7 @@
     try { data = await api('/api/upload', { method: 'POST', body: fd, raw: true }); }
     catch (e) { toast('⚠️', 'Upload failed', e.message); return; }
     state.socket.emit('message:send', {
-      toUserId: state.current.peer.id,
+      ...sendTarget(),
       body: '',
       attachment: { url: data.url, type: 'audio', name: fmtDur(durationSec), size: data.size },
       replyToId: state.replyTo ? state.replyTo.id : null,
@@ -1191,6 +1303,7 @@
   }
 
   function onMessageNew(env) {
+    if (env.isGroup) return onGroupMessageNew(env);
     const msg = env.message;
     const peerInfo = peerFromEnvelope(env);
     const convId = msg.conversationId;
@@ -1227,9 +1340,43 @@
       }
     } else if (!isMine) {
       conv.unread = (conv.unread || 0) + 1;
-      if (!conv.muted) toast('💬', friendName(friend), previewText(msg), () => openConversation(convId, friend.id));
+      if (!conv.muted) toast('💬', friendName(friend), previewText(msg, conv), () => openConversation(convId, friend.id));
     }
 
+    renderChats();
+  }
+
+  function onGroupMessageNew(env) {
+    const msg = env.message;
+    const convId = env.conversationId || msg.conversationId;
+    const isMine = msg.senderId === state.me.id;
+    const isOpen = state.current && state.current.isGroup && state.current.conversationId === convId;
+
+    let conv = state.conversations.get(convId);
+    if (!conv) {
+      // we don't have this group yet — pull the list so it appears correctly
+      conv = { id: convId, isGroup: true, group: { id: convId, name: 'Group', members: env.sender ? [env.sender] : [] }, lastMessage: msg, unread: 0 };
+      state.conversations.set(convId, conv);
+      loadConversations().then(renderChats).catch(() => {});
+    }
+    conv.lastMessage = msg;
+    // learn the sender as a group member if we didn't know them
+    if (env.sender && conv.group && !(conv.group.members || []).some((u) => u.id === env.sender.id)) {
+      conv.group.members = (conv.group.members || []).concat(env.sender);
+    }
+
+    if (isOpen) {
+      state.messages.push(msg);
+      appendMessage(msg);
+      conv.unread = 0;
+      if (!isMine) state.socket.emit('message:read', { conversationId: convId });
+    } else if (!isMine) {
+      conv.unread = (conv.unread || 0) + 1;
+      if (!conv.muted) {
+        const who = env.sender ? String(env.sender.displayName || '').split(/\s+/)[0] : '';
+        toast('👥', conv.group.name || 'Group', (who ? who + ': ' : '') + previewText(msg).replace(/^You: /, ''), () => openGroup(convId));
+      }
+    }
     renderChats();
   }
 
@@ -1277,7 +1424,7 @@
       f.online = payload.online;
       f.lastSeen = payload.lastSeen;
     }
-    if (state.current && state.current.peer.id === payload.userId) {
+    if (state.current && state.current.peer && state.current.peer.id === payload.userId) {
       Object.assign(state.current.peer, { online: payload.online, lastSeen: payload.lastSeen });
       updatePeerStatus();
     }
@@ -1287,11 +1434,14 @@
 
   function onTyping(payload) {
     if (!state.current || state.current.conversationId !== payload.conversationId) return;
-    if (payload.fromUserId !== state.current.peer.id) return;
+    if (payload.fromUserId === state.me.id) return;
+    const isGroup = state.current.isGroup;
+    if (!isGroup && payload.fromUserId !== state.current.peer.id) return;
     const row = $('#typing-row');
     clearTimeout(state.peerTypingTimer);
     if (payload.isTyping) {
-      $('#typing-text').textContent = state.current.peer.displayName + ' is typing';
+      const name = isGroup ? (payload.fromName || 'Someone') : state.current.peer.displayName;
+      $('#typing-text').textContent = name + ' is typing';
       row.classList.add('show');
       state.peerTypingTimer = setTimeout(() => row.classList.remove('show'), 5000);
     } else {
@@ -1432,6 +1582,7 @@
     if (m.unsent) return 'unsent a message';
     if (m.attachmentType === 'image') return '📷 Photo';
     if (m.attachmentType === 'video') return '🎥 Video';
+    if (m.attachmentType === 'audio') return '🎤 Voice message';
     if (m.attachmentType === 'file') return '📎 ' + (m.attachmentName || 'File');
     return (m.body || '').slice(0, 90);
   }
@@ -1439,7 +1590,9 @@
     if (!state.replyTo) return;
     const who = state.replyTo.senderId === state.me.id
       ? 'yourself'
-      : ((state.current && state.current.peer && state.current.peer.displayName) || 'them');
+      : (state.current && state.current.isGroup
+          ? String(msgSenderUser(state.replyTo).displayName || 'them').split(/\s+/)[0]
+          : ((state.current && state.current.peer && state.current.peer.displayName) || 'them'));
     $('#reply-bar-label').textContent = 'Replying to ' + who;
     $('#reply-bar-text').textContent = state.replyTo.preview;
     $('#reply-bar').classList.remove('hidden');
@@ -1587,7 +1740,7 @@
     if (!state.current || !state.socket) return;
     if (state.current.peer && state.current.peer.iBlocked) { toast('🚫', 'Blocked', 'Unblock to send'); return; }
     state.socket.emit('message:send',
-      { toUserId: state.current.peer.id, body: emoji, attachment: null, replyToId: null },
+      { ...sendTarget(), body: emoji, attachment: null, replyToId: null },
       (resp) => { if (resp && resp.error) toast('⚠️', 'Not sent', resp.error); });
   }
 
@@ -1684,10 +1837,17 @@
   }
 
   function onConversationCleared(payload) {
-    state.conversations.delete(payload.conversationId);
+    const conv = state.conversations.get(payload.conversationId);
+    if (conv && conv.isGroup) {
+      conv.lastMessage = null;
+      conv.unread = 0;
+    } else {
+      state.conversations.delete(payload.conversationId);
+    }
     if (state.current && state.current.conversationId === payload.conversationId) {
       state.messages = [];
-      backToList();
+      if (state.current.isGroup) renderMessages(); // stay in the now-empty group
+      else backToList();
     }
     renderChats();
   }
@@ -1702,12 +1862,43 @@
   }
   function onFriendRemoved(payload) { removeFriendLocal(payload.userId); }
 
+  // ---- group real-time events ----
+  function onConversationNew(payload) {
+    const c = payload && payload.conversation;
+    if (!c) return;
+    const existed = state.conversations.has(c.id);
+    state.conversations.set(c.id, { ...state.conversations.get(c.id), ...c });
+    renderChats();
+    // only toast people who were just added (not the creator, who already has it)
+    if (c.isGroup && !existed) toast('👥', 'New group', (c.group && c.group.name) || 'You were added to a group', () => openGroup(c.id));
+  }
+  function onGroupUpdated(payload) {
+    const g = payload && payload.group;
+    if (!g) return;
+    const conv = state.conversations.get(g.id);
+    if (conv) { conv.isGroup = true; conv.group = g; }
+    if (state.current && state.current.isGroup && state.current.conversationId === g.id) {
+      state.current.group = g;
+      renderGroupHeader(g);
+      renderMessages();
+    }
+    renderChats();
+  }
+  function onGroupRemoved(payload) {
+    const cid = payload && payload.conversationId;
+    if (!cid) return;
+    state.conversations.delete(cid);
+    if (state.current && state.current.conversationId === cid) backToList();
+    renderChats();
+  }
+
   // ---- chat header menu: delete conversation / unfriend ----
   const chatMoreBtn = document.getElementById('chat-more-btn');
   if (chatMoreBtn) chatMoreBtn.addEventListener('click', openChatMenu);
 
   function openChatMenu() {
     if (!state.current) return;
+    if (state.current.isGroup) return openGroupMenu();
     const peer = state.current.peer;
     const cid = state.current.conversationId;
     const conv = state.conversations.get(cid) || {};
@@ -1737,6 +1928,189 @@
       if (e.target.closest('[data-unfriend]')) { close(); if (confirm('Unfriend ' + friendName(peer) + '?')) unfriend(peer.id); return; }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
     });
+  }
+
+  function openGroupMenu() {
+    const cid = state.current.conversationId;
+    const conv = state.conversations.get(cid) || {};
+    const group = state.current.group || {};
+    const n = group.memberCount || (group.members || []).length || 0;
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="mm-actions">
+          <button class="mm-act" data-pin="1">${conv.pinned ? '📍 Unpin' : '📌 Pin'} conversation</button>
+          <button class="mm-act" data-mute="1">${conv.muted ? '🔔 Unmute' : '🔕 Mute'} notifications</button>
+          <button class="mm-act" data-members="1">View members (${n})</button>
+          <button class="mm-act" data-rename="1">Rename group</button>
+          <button class="mm-act" data-photo="1">Change group photo</button>
+          <button class="mm-act" data-add="1">Add people</button>
+          <button class="mm-act" data-delconv="1">Clear messages</button>
+          <button class="mm-act danger" data-leave="1">Leave group</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
+      if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
+      if (e.target.closest('[data-members]')) { close(); openGroupMembers(group); return; }
+      if (e.target.closest('[data-rename]')) { close(); openRenameGroup(cid, group); return; }
+      if (e.target.closest('[data-photo]')) { close(); changeGroupPhoto(cid); return; }
+      if (e.target.closest('[data-add]')) { close(); openAddMembers(cid, group); return; }
+      if (e.target.closest('[data-delconv]')) { close(); if (confirm('Clear all messages in this group?')) deleteConversation(cid); return; }
+      if (e.target.closest('[data-leave]')) { close(); if (confirm('Leave “' + (group.name || 'this group') + '”?')) leaveGroup(cid); return; }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  function openGroupMembers(group) {
+    const members = group.members || [];
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="settings-title">Members</div>
+        <div class="fwd-list">
+          ${members.map((u) => `
+            <div class="fwd-row">
+              ${avatarHtml(u)}
+              <span class="fwd-name">${escapeHtml(u.displayName)}${u.id === state.me.id ? ' (you)' : ''}${u.id === group.ownerId ? ' · admin' : ''}</span>
+            </div>`).join('')}
+        </div>
+        <div class="mm-actions"><button class="mm-act" data-cancel="1">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', (e) => { if (e.target.closest('[data-cancel]') || e.target === overlay) close(); });
+  }
+
+  function openRenameGroup(cid, group) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>Rename group</h3>
+        <div class="field"><label>Group name</label><input id="gr-name" maxlength="60" value="${escapeHtml(group.name || '')}"></div>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-primary" id="gr-save">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
+    overlay.querySelector('#gr-save').addEventListener('click', async () => {
+      const name = overlay.querySelector('#gr-name').value.trim();
+      if (!name) return;
+      try {
+        const r = await api('/api/groups/' + cid + '/rename', { method: 'POST', body: { name } });
+        applyGroupMeta(cid, r.group);
+        close();
+        toast('✏️', 'Renamed', 'Group is now “' + name + '”');
+      } catch (e2) { toast('⚠️', 'Error', e2.message); }
+    });
+  }
+
+  function changeGroupPhoto(cid) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      try {
+        const img = await compressImage(file);
+        const fd = new FormData();
+        fd.append('file', img);
+        fd.append('kind', 'avatar');
+        const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+        const r = await api('/api/groups/' + cid + '/photo', { method: 'POST', body: { avatarUrl: data.url } });
+        applyGroupMeta(cid, r.group);
+        toast('✅', 'Updated', 'Group photo changed');
+      } catch (e2) { toast('⚠️', 'Error', e2.message || 'Upload failed'); }
+    };
+    input.click();
+  }
+
+  function openAddMembers(cid, group) {
+    const memberIds = new Set((group.members || []).map((u) => u.id));
+    const candidates = Array.from(state.friends.values()).filter((f) => !memberIds.has(f.id))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const selected = new Set();
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet fwd-sheet">
+        <div class="settings-title">Add people</div>
+        ${candidates.length ? '' : '<div class="empty-note">All your friends are already in.</div>'}
+        <div class="fwd-list">
+          ${candidates.map((f) => `
+            <button class="fwd-row" data-fid="${f.id}">
+              ${avatarHtml(f)}
+              <span class="fwd-name">${escapeHtml(friendName(f))}</span>
+              <span class="fwd-check">${IC.check}</span>
+            </button>`).join('')}
+        </div>
+        <div class="mm-actions">
+          <button class="mm-act primary" id="add-go" disabled>Add</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    const goBtn = overlay.querySelector('#add-go');
+    overlay.addEventListener('click', async (e) => {
+      const row = e.target.closest('[data-fid]');
+      if (row) {
+        const id = Number(row.dataset.fid);
+        if (selected.has(id)) { selected.delete(id); row.classList.remove('sel'); }
+        else { selected.add(id); row.classList.add('sel'); }
+        goBtn.disabled = selected.size === 0;
+        goBtn.textContent = selected.size ? `Add (${selected.size})` : 'Add';
+        return;
+      }
+      if (e.target.closest('#add-go')) {
+        if (!selected.size) return;
+        try {
+          const r = await api('/api/groups/' + cid + '/members', { method: 'POST', body: { memberIds: Array.from(selected) } });
+          applyGroupMeta(cid, r.group);
+          close();
+          toast('✅', 'Added', selected.size > 1 ? `${selected.size} people added` : 'Member added');
+        } catch (e2) { toast('⚠️', 'Error', e2.message); }
+        return;
+      }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  async function leaveGroup(cid) {
+    try {
+      await api('/api/groups/' + cid + '/leave', { method: 'POST', body: {} });
+      state.conversations.delete(cid);
+      if (state.current && state.current.conversationId === cid) backToList();
+      renderChats();
+      toast('👋', 'Left group', 'You left the group');
+    } catch (e) { toast('⚠️', 'Error', e.message); }
+  }
+
+  // Apply fresh group meta to local state + header after a change.
+  function applyGroupMeta(cid, meta) {
+    if (!meta) return;
+    const conv = state.conversations.get(cid);
+    if (conv) { conv.isGroup = true; conv.group = meta; }
+    if (state.current && state.current.isGroup && state.current.conversationId === cid) {
+      state.current.group = meta;
+      renderGroupHeader(meta);
+      renderMessages();
+    }
+    renderChats();
   }
 
   async function toggleConvPref(cid, key, value) {
@@ -1838,7 +2212,8 @@
       const matches = state.messages.filter((m) => !m.unsent && m.body && m.body.toLowerCase().includes(ql));
       if (!matches.length) { results.innerHTML = `<div class="cs-hint">No messages found</div>`; return; }
       results.innerHTML = matches.slice().reverse().map((m) => {
-        const who = m.senderId === state.me.id ? 'You' : friendName(state.current.peer);
+        const who = m.senderId === state.me.id ? 'You'
+          : (state.current.isGroup ? String(msgSenderUser(m).displayName || '').split(/\s+/)[0] : friendName(state.current.peer));
         return `<button class="cs-row" data-mid="${m.id}">
           <div class="cs-row-top"><span class="cs-who">${escapeHtml(who)}</span><span class="cs-time">${fmtTime(m.createdAt)}</span></div>
           <div class="cs-snip">${searchSnippet(m.body, q)}</div>
@@ -2145,6 +2520,62 @@
 
   const settingsBtn = document.getElementById('settings-btn');
   if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+
+  const newGroupBtn = document.getElementById('new-group-btn');
+  if (newGroupBtn) newGroupBtn.addEventListener('click', openCreateGroup);
+
+  function openCreateGroup() {
+    const friends = Array.from(state.friends.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const selected = new Set();
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet fwd-sheet">
+        <div class="settings-title">New group</div>
+        <div class="field" style="padding:0 4px 6px"><input id="cg-name" maxlength="60" placeholder="Group name"></div>
+        ${friends.length >= 2 ? '' : '<div class="empty-note">You need at least 2 friends to start a group.</div>'}
+        <div class="fwd-list">
+          ${friends.map((f) => `
+            <button class="fwd-row" data-fid="${f.id}">
+              ${avatarHtml(f)}
+              <span class="fwd-name">${escapeHtml(friendName(f))}</span>
+              <span class="fwd-check">${IC.check}</span>
+            </button>`).join('')}
+        </div>
+        <div class="mm-actions">
+          <button class="mm-act primary" id="cg-go" disabled>Create</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    const goBtn = overlay.querySelector('#cg-go');
+    const updateGo = () => { goBtn.disabled = selected.size < 2; goBtn.textContent = selected.size ? `Create (${selected.size})` : 'Create'; };
+    overlay.addEventListener('click', async (e) => {
+      const row = e.target.closest('[data-fid]');
+      if (row) {
+        const id = Number(row.dataset.fid);
+        if (selected.has(id)) { selected.delete(id); row.classList.remove('sel'); }
+        else { selected.add(id); row.classList.add('sel'); }
+        updateGo();
+        return;
+      }
+      if (e.target.closest('#cg-go')) {
+        if (selected.size < 2) { toast('👥', 'Pick friends', 'Choose at least 2 friends'); return; }
+        const name = overlay.querySelector('#cg-name').value.trim();
+        try {
+          const { conversation } = await api('/api/groups', { method: 'POST', body: { name, memberIds: Array.from(selected) } });
+          state.conversations.set(conversation.id, conversation);
+          renderChats();
+          close();
+          openGroup(conversation.id);
+        } catch (e2) { toast('⚠️', 'Could not create', e2.message); }
+        return;
+      }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
 
   function openSettings() {
     const curTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
