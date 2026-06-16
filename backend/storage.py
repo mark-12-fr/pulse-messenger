@@ -50,6 +50,8 @@ def attachment_type_for(mime):
         return "image"
     if mime.startswith("video/"):
         return "video"
+    if mime.startswith("audio/"):
+        return "audio"
     return "file"
 
 

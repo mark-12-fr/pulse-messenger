@@ -321,6 +321,7 @@
     const mine = msg.senderId === state.me.id ? 'You: ' : '';
     if (msg.attachmentType === 'image') return mine + '📷 Photo';
     if (msg.attachmentType === 'video') return mine + '🎥 Video';
+    if (msg.attachmentType === 'audio') return mine + '🎤 Voice message';
     if (msg.attachmentType === 'file') return mine + '📎 ' + (msg.attachmentName || 'File');
     return mine + (msg.body || '');
   }
@@ -585,6 +586,7 @@
   async function openConversation(conversationId, peerId) {
     const peer = state.friends.get(peerId);
     if (!peer) return;
+    if (recState) cancelVoiceRecording();
     state.current = { conversationId, peer };
     $('#typing-row').classList.remove('show');
     clearTimeout(state.peerTypingTimer);
@@ -674,6 +676,7 @@
 
     box.innerHTML = html;
     updateSeenRow();
+    bindVoicePlayers();
     box.scrollTop = box.scrollHeight;
   }
 
@@ -733,6 +736,7 @@
     html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new" data-mid="${m.id}">${avatar}${renderBubble(m)}</div>`;
     box.insertAdjacentHTML('beforeend', html);
     updateSeenRow();
+    bindVoicePlayers();
     box.scrollTop = box.scrollHeight;
   }
 
@@ -766,6 +770,8 @@
     } else if (m.attachmentType === 'video') {
       const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
       inner = `<div class="bubble media"><video src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="video" controls preload="metadata"></video>${cap}</div>`;
+    } else if (m.attachmentType === 'audio') {
+      inner = `<div class="bubble voice">${voicePlayerHtml(m)}</div>`;
     } else if (m.attachmentType === 'file') {
       const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
       inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
@@ -779,6 +785,7 @@
 
   // ---------- back button (mobile) ----------
   function backToList() {
+    if (recState) cancelVoiceRecording();
     appScreen.classList.remove('in-chat');
     state.current = null;
     $('#chat-active').classList.add('hidden');
@@ -792,10 +799,22 @@
   // ============================================================
   const msgInput = $('#message-input');
   const sendBtn = $('#send-btn');
+  const SEND_ICON = sendBtn.innerHTML; // original paper-plane
+  const MIC_ICON = '<svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>';
+  const voiceSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+    window.MediaRecorder && (window.AudioContext || window.webkitAudioContext));
 
   function refreshSendState() {
-    const hasText = msgInput.value.trim().length > 0;
-    sendBtn.disabled = !(hasText || state.attachment);
+    const hasContent = msgInput.value.trim().length > 0 || !!state.attachment;
+    const micMode = !hasContent && voiceSupported && !state.editing && !!state.current && !recState;
+    const mode = micMode ? 'mic' : 'send';
+    if (sendBtn.dataset.mode !== mode) {
+      sendBtn.dataset.mode = mode;
+      sendBtn.innerHTML = micMode ? MIC_ICON : SEND_ICON;
+      sendBtn.classList.toggle('mic-mode', micMode);
+      sendBtn.title = micMode ? 'Record voice message' : 'Send';
+    }
+    sendBtn.disabled = micMode ? false : !hasContent;
   }
 
   msgInput.addEventListener('input', () => {
@@ -812,7 +831,10 @@
       sendMessage();
     }
   });
-  sendBtn.addEventListener('click', sendMessage);
+  sendBtn.addEventListener('click', () => {
+    if (sendBtn.dataset.mode === 'mic') startVoiceRecording();
+    else sendMessage();
+  });
 
   function emitTyping() {
     if (!state.current || !state.socket) return;
@@ -967,6 +989,199 @@
   }
 
   // ============================================================
+  // VOICE MESSAGES (recorded in-browser, re-encoded to WAV so they play on
+  // every device — Android records webm/opus that iPhone Safari can't play)
+  // ============================================================
+  let recState = null; // { mr, stream, chunks, startTime, cancelled, timer }
+
+  function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+
+  async function startVoiceRecording() {
+    if (!state.current || recState) return;
+    if (state.current.peer && state.current.peer.iBlocked) { toast('🚫', 'Blocked', 'Unblock to send'); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      toast('🎤', 'Mic blocked', 'Allow microphone access to record voice');
+      return;
+    }
+    let mr;
+    try { mr = new MediaRecorder(stream); }
+    catch (e) { stream.getTracks().forEach((t) => t.stop()); toast('⚠️', 'Cannot record', 'Voice not supported here'); return; }
+    const chunks = [];
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = finishVoiceRecording;
+    recState = { mr, stream, chunks, startTime: Date.now(), cancelled: false, timer: null };
+    mr.start();
+    showRecordingBar();
+    refreshSendState();
+  }
+
+  function stopVoiceRecording() { if (recState) { try { recState.mr.stop(); } catch (e) {} } }
+  function cancelVoiceRecording() { if (recState) { recState.cancelled = true; try { recState.mr.stop(); } catch (e) {} } }
+
+  async function finishVoiceRecording() {
+    const r = recState; recState = null;
+    hideRecordingBar();
+    refreshSendState();
+    if (r.timer) clearInterval(r.timer);
+    if (r.stream) r.stream.getTracks().forEach((t) => t.stop());
+    const dur = (Date.now() - r.startTime) / 1000;
+    if (r.cancelled || !r.chunks.length) return;
+    if (dur < 1) { toast('🎤', 'Too short', 'Hold a little longer'); return; }
+    const blob = new Blob(r.chunks, { type: (r.chunks[0] && r.chunks[0].type) || 'audio/webm' });
+    let wav;
+    try { wav = await blobToWav(blob); }
+    catch (e) { toast('⚠️', 'Recording failed', 'Could not process audio'); return; }
+    await sendVoiceMessage(wav, dur);
+  }
+
+  async function sendVoiceMessage(wavBlob, durationSec) {
+    const file = new File([wavBlob], 'voice.wav', { type: 'audio/wav' });
+    const fd = new FormData();
+    fd.append('file', file);
+    let data;
+    try { data = await api('/api/upload', { method: 'POST', body: fd, raw: true }); }
+    catch (e) { toast('⚠️', 'Upload failed', e.message); return; }
+    state.socket.emit('message:send', {
+      toUserId: state.current.peer.id,
+      body: '',
+      attachment: { url: data.url, type: 'audio', name: fmtDur(durationSec), size: data.size },
+      replyToId: state.replyTo ? state.replyTo.id : null,
+    }, (resp) => { if (resp && resp.error) toast('⚠️', 'Not sent', resp.error); });
+    cancelReply();
+  }
+
+  function showRecordingBar() {
+    const composer = document.querySelector('.composer');
+    let bar = document.getElementById('rec-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'rec-bar';
+      bar.className = 'rec-bar';
+      composer.parentNode.insertBefore(bar, composer);
+    }
+    bar.innerHTML = `
+      <button class="rec-cancel" id="rec-cancel" aria-label="Cancel recording">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7Zm9-3 1 2h4v2H4V6h4l1-2h6Z"/></svg>
+      </button>
+      <span class="rec-dot"></span>
+      <span class="rec-time" id="rec-time">0:00</span>
+      <span class="rec-hint">Recording…</span>
+      <button class="rec-send" id="rec-send" aria-label="Send voice">${SEND_ICON}</button>`;
+    bar.classList.remove('hidden');
+    composer.classList.add('hidden');
+    bar.querySelector('#rec-cancel').onclick = cancelVoiceRecording;
+    bar.querySelector('#rec-send').onclick = stopVoiceRecording;
+    const timeEl = bar.querySelector('#rec-time');
+    recState.timer = setInterval(() => {
+      const s = (Date.now() - recState.startTime) / 1000;
+      timeEl.textContent = fmtDur(s);
+      if (s >= 300) stopVoiceRecording(); // 5-minute cap
+    }, 250);
+  }
+  function hideRecordingBar() {
+    const bar = document.getElementById('rec-bar');
+    if (bar) bar.classList.add('hidden');
+    const composer = document.querySelector('.composer');
+    const blocked = state.current && state.current.peer && state.current.peer.iBlocked;
+    if (composer && !blocked) composer.classList.remove('hidden');
+  }
+
+  // Decode whatever was recorded and re-encode to 16 kHz mono 16-bit WAV.
+  async function blobToWav(blob) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC();
+    try {
+      const buf = await blob.arrayBuffer();
+      const audio = await new Promise((resolve, reject) => {
+        let ret;
+        try { ret = ctx.decodeAudioData(buf, resolve, reject); } catch (e) { reject(e); return; }
+        if (ret && typeof ret.then === 'function') ret.then(resolve, reject);
+      });
+      const rate = 16000;
+      const mono = downmixMono(audio);
+      const res = resampleLinear(mono, audio.sampleRate, rate);
+      return encodeWav(res, rate);
+    } finally { try { ctx.close(); } catch (e) {} }
+  }
+  function downmixMono(audioBuf) {
+    const ch = audioBuf.numberOfChannels;
+    if (ch === 1) return audioBuf.getChannelData(0).slice();
+    const len = audioBuf.length;
+    const out = new Float32Array(len);
+    for (let c = 0; c < ch; c++) {
+      const d = audioBuf.getChannelData(c);
+      for (let i = 0; i < len; i++) out[i] += d[i] / ch;
+    }
+    return out;
+  }
+  function resampleLinear(data, fromRate, toRate) {
+    if (fromRate === toRate) return data;
+    const ratio = fromRate / toRate;
+    const outLen = Math.floor(data.length / ratio);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const idx = i * ratio;
+      const i0 = Math.floor(idx), i1 = Math.min(i0 + 1, data.length - 1);
+      out[i] = data[i0] + (data[i1] - data[i0]) * (idx - i0);
+    }
+    return out;
+  }
+  function encodeWav(samples, rate) {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buf);
+    const wstr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+    wstr(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); wstr(8, 'WAVE');
+    wstr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    wstr(36, 'data'); view.setUint32(40, samples.length * 2, true);
+    let off = 44;
+    for (let i = 0; i < samples.length; i++) {
+      let s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      off += 2;
+    }
+    return new Blob([view], { type: 'audio/wav' });
+  }
+
+  // Custom voice-message player (play/pause + scrubber + duration).
+  function voicePlayerHtml(m) {
+    const label = (m.attachmentName && /^\d+:\d\d$/.test(m.attachmentName)) ? m.attachmentName : '🎤';
+    return `<div class="vp" data-vp>
+      <button class="vp-btn" data-vp-toggle aria-label="Play">${IC.play}</button>
+      <div class="vp-track" data-vp-track><div class="vp-fill"></div></div>
+      <span class="vp-dur">${escapeHtml(label)}</span>
+      <audio src="${escapeHtml(mediaUrl(m.attachmentUrl))}" preload="metadata"></audio>
+    </div>`;
+  }
+  function bindVoicePlayers() {
+    $$('#messages .vp').forEach((vp) => {
+      if (vp.dataset.bound) return;
+      vp.dataset.bound = '1';
+      const audio = vp.querySelector('audio');
+      const fill = vp.querySelector('.vp-fill');
+      const btn = vp.querySelector('[data-vp-toggle]');
+      const durEl = vp.querySelector('.vp-dur');
+      if (!audio) return;
+      const setIcon = () => { btn.innerHTML = audio.paused ? IC.play : IC.pause; vp.classList.toggle('playing', !audio.paused); };
+      audio.addEventListener('loadedmetadata', () => {
+        if (isFinite(audio.duration) && audio.duration > 0 && durEl) durEl.textContent = fmtDur(audio.duration);
+      });
+      audio.addEventListener('timeupdate', () => { if (audio.duration && fill) fill.style.width = (audio.currentTime / audio.duration * 100) + '%'; });
+      audio.addEventListener('play', setIcon);
+      audio.addEventListener('pause', setIcon);
+      audio.addEventListener('ended', () => { if (fill) fill.style.width = '0%'; setIcon(); });
+      setIcon();
+    });
+  }
+
+  // ============================================================
   // SOCKET EVENT HANDLERS
   // ============================================================
   function peerFromEnvelope(env) {
@@ -1088,6 +1303,25 @@
   // LIGHTBOX
   // ============================================================
   $('#messages').addEventListener('click', (e) => {
+    // voice player: play/pause + scrub
+    const toggle = e.target.closest('[data-vp-toggle]');
+    if (toggle) {
+      const audio = toggle.closest('.vp').querySelector('audio');
+      if (audio) {
+        $$('#messages audio').forEach((a) => { if (a !== audio) a.pause(); });
+        if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+      }
+      return;
+    }
+    const track = e.target.closest('[data-vp-track]');
+    if (track) {
+      const audio = track.closest('.vp').querySelector('audio');
+      if (audio && audio.duration) {
+        const rect = track.getBoundingClientRect();
+        audio.currentTime = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * audio.duration;
+      }
+      return;
+    }
     const light = e.target.closest('[data-light]');
     if (!light) return;
     const type = light.dataset.light;
@@ -1844,6 +2078,8 @@
     check: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>',
     tick1: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>',
     tick2: '<svg viewBox="0 0 24 24" width="17" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 6-7.5 11L11 13"/><path d="m15 6-7.5 11L4 13"/></svg>',
+    play: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];

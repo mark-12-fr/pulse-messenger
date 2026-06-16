@@ -235,6 +235,8 @@ def _msg_preview(m):
         return "📷 Photo"
     if m.attachment_type == "video":
         return "🎥 Video"
+    if m.attachment_type == "audio":
+        return "🎤 Voice message"
     if m.attachment_type == "file":
         return "📎 " + (m.attachment_name or "File")
     return (m.body or "")[:80]
