@@ -737,10 +737,11 @@
       });
       updatePeerStatus();
       setComposerBlocked(peer);
+      const conv = state.conversations.get(conversationId);
+      state.current.unreadAtOpen = conv ? (conv.unread || 0) : 0;
       renderMessages();
 
       // clear unread locally
-      const conv = state.conversations.get(conversationId);
       if (conv) { conv.unread = 0; renderChats(); }
     } catch (e) {
       $('#messages').innerHTML = `<div class="empty-note">Could not load messages.</div>`;
@@ -779,6 +780,7 @@
         if (conv) conv.group = data.group;
         renderGroupHeader(data.group);
       }
+      state.current.unreadAtOpen = conv ? (conv.unread || 0) : 0;
       renderMessages();
       if (conv) { conv.unread = 0; }
     } catch (e) {
@@ -833,6 +835,8 @@
     let html = '';
     let lastDay = '';
     let prevSender = null;
+    const unread = (state.current && state.current.unreadAtOpen) || 0;
+    const dividerIdx = unread >= 1 && state.messages.length > unread ? state.messages.length - unread : -1;
     state.messages.forEach((m, i) => {
       const d = dayLabel(m.createdAt);
       if (d !== lastDay) {
@@ -840,6 +844,7 @@
         lastDay = d;
         prevSender = null;
       }
+      if (i === dividerIdx) { html += `<div class="new-divider"><span>New messages</span></div>`; prevSender = null; }
       const out = m.senderId === state.me.id;
       const grouped = prevSender === m.senderId;
       const avatar = avatarHtml(out ? state.me : msgSenderUser(m), { cls: 'm-avatar' });
@@ -855,6 +860,9 @@
     updateSeenRow();
     bindVoicePlayers();
     box.scrollTop = box.scrollHeight;
+    if (state.current) state.current.unreadAtOpen = 0;
+    newSinceScroll = 0;
+    updateScrollBtn();
   }
 
   // Show a plain "Seen" label under the last outgoing message (no avatar).
@@ -913,10 +921,18 @@
     const grouped = !!prev && prevD === d && prev.senderId === m.senderId;
     const avatar = avatarHtml(out ? state.me : msgSenderUser(m), { cls: 'm-avatar' });
     html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new" data-mid="${m.id}">${avatar}${renderBubble(m, groupSenderLabel(m, out, grouped))}</div>`;
+    // stick to bottom only if it's my message or I'm already near the bottom
+    const stick = out || nearBottom(box);
     box.insertAdjacentHTML('beforeend', html);
     updateSeenRow();
     bindVoicePlayers();
-    box.scrollTop = box.scrollHeight;
+    if (stick) {
+      box.scrollTop = box.scrollHeight;
+      newSinceScroll = 0;
+    } else {
+      newSinceScroll += 1;
+    }
+    updateScrollBtn();
   }
 
   function reactionsHtml(m) {
@@ -940,7 +956,7 @@
         who = (state.current && state.current.peer && state.current.peer.displayName) || '';
       }
     }
-    return `<div class="reply-quote"><span class="rq-who">${escapeHtml(who)}</span> ${escapeHtml(m.replyTo.preview)}</div>`;
+    return `<div class="reply-quote" data-reply-jump="${m.replyTo.id}"><span class="rq-who">${escapeHtml(who)}</span> ${escapeHtml(m.replyTo.preview)}</div>`;
   }
 
   function renderBubble(m, senderLabel) {
@@ -1536,6 +1552,9 @@
   // LIGHTBOX
   // ============================================================
   $('#messages').addEventListener('click', (e) => {
+    // tap a reply quote -> jump to the original message
+    const jump = e.target.closest('[data-reply-jump]');
+    if (jump) { jumpToMessage(Number(jump.dataset.replyJump)); return; }
     // voice player: play/pause + scrub
     const toggle = e.target.closest('[data-vp-toggle]');
     if (toggle) {
@@ -1675,10 +1694,68 @@
   const messagesEl = $('#messages');
   let pressTimer = null;
   let touchState = null;
+  let lastTapTime = 0;
+  let lastTapEl = null;
+
+  // Scroll to a message and flash a highlight (used by reply-quote taps).
+  function jumpToMessage(id) {
+    const el = messagesEl.querySelector(`.msg[data-mid="${id}"]`);
+    if (!el) { toast('🔎', 'Unavailable', 'That message is no longer here'); return; }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('jump-hl');
+    void el.offsetWidth;
+    el.classList.add('jump-hl');
+    setTimeout(() => el.classList.remove('jump-hl'), 1600);
+  }
+
+  // Double-tap / double-click a bubble to ❤️ it (toggles).
+  function quickLike(msgEl, target) {
+    if (target && target.closest('img,video,audio,a,.vp,[data-light],[data-reply-jump]')) return;
+    const m = state.messages.find((x) => x.id === Number(msgEl.dataset.mid));
+    if (m && !m.unsent) reactToMessage(m.id, '❤️');
+  }
+  messagesEl.addEventListener('dblclick', (e) => {
+    const msgEl = e.target.closest('.msg[data-mid]');
+    if (msgEl) quickLike(msgEl, e.target);
+  });
+
+  // Scroll-to-bottom floating button (+ count of new messages while scrolled up).
+  let newSinceScroll = 0;
+  function nearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 140; }
+  function updateScrollBtn() {
+    const btn = document.getElementById('scroll-bottom');
+    if (!btn) return;
+    const show = !nearBottom(messagesEl);
+    btn.classList.toggle('hidden', !show);
+    const cnt = document.getElementById('sb-count');
+    if (cnt) {
+      if (show && newSinceScroll > 0) { cnt.textContent = newSinceScroll > 99 ? '99+' : String(newSinceScroll); cnt.classList.remove('hidden'); }
+      else cnt.classList.add('hidden');
+    }
+    if (!show) newSinceScroll = 0;
+  }
+  messagesEl.addEventListener('scroll', updateScrollBtn, { passive: true });
+  (function () {
+    const btn = document.getElementById('scroll-bottom');
+    if (btn) btn.addEventListener('click', () => {
+      messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+      newSinceScroll = 0;
+      setTimeout(updateScrollBtn, 350);
+    });
+  })();
 
   function onTouchStart(e) {
     const msgEl = e.target.closest('.msg[data-mid]');
     if (!msgEl) return;
+    const now = Date.now();
+    if (lastTapEl === msgEl && now - lastTapTime < 300) {
+      // double tap -> quick like
+      clearTimeout(pressTimer); pressTimer = null;
+      touchState = null; lastTapTime = 0; lastTapEl = null;
+      quickLike(msgEl, e.target);
+      return;
+    }
+    lastTapTime = now; lastTapEl = msgEl;
     const t = e.touches[0];
     touchState = { el: msgEl, startX: t.clientX, startY: t.clientY, swiping: false };
     clearTimeout(pressTimer);

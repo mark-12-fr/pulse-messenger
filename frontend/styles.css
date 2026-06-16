@@ -1100,3 +1100,35 @@ html.resume #auth-screen { display: none; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ===================== reply jump · new-messages divider · scroll-to-bottom ===================== */
+.reply-quote { cursor: pointer; }
+.msg.jump-hl .bubble { animation: jumpHl 1.5s var(--ease); }
+@keyframes jumpHl {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  15% { box-shadow: 0 0 0 3px var(--accent); }
+  55% { box-shadow: 0 0 0 3px var(--accent); }
+}
+
+.new-divider { display: flex; align-items: center; gap: 10px; margin: 14px 6px; color: var(--accent); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .4px; }
+.new-divider::before, .new-divider::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: .5; }
+
+.chat-active { position: relative; }
+.scroll-bottom {
+  position: absolute; right: 16px; bottom: calc(80px + var(--safe-bottom));
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--elev); color: var(--text);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow); z-index: 5; cursor: pointer;
+  animation: popIn .25s var(--ease);
+  transition: transform .14s var(--ease), background .15s var(--ease);
+}
+.scroll-bottom:hover { background: var(--hover); }
+.scroll-bottom:active { transform: scale(.9); }
+.sb-count {
+  position: absolute; top: -5px; right: -5px; min-width: 20px; height: 20px;
+  padding: 0 6px; border-radius: 11px; background: var(--accent-grad); color: #fff;
+  font-size: 11px; font-weight: 750; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+@keyframes popIn { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
