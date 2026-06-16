@@ -757,8 +757,9 @@ def on_message_send(payload):
     emit_conv(conv, "message:new", envelope)
 
     # Push to recipients who aren't actively in the app and haven't muted this chat.
+    # Content-free notifications: never put the actual message text in the push.
     title = (conv.get("name") or "Group") if is_group else sender["displayName"]
-    bodytext = (f"{sender['displayName']}: " + (msg.get("body") or "sent a message")) if is_group else "Sent you a message"
+    bodytext = (f"{sender['displayName']} sent a message") if is_group else "Sent you a message"
     for mid in db.conversation_member_ids(conv):
         if not mid or mid == uid:
             continue
