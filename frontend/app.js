@@ -43,23 +43,6 @@
   // A friend's display name, overridden by the user's private nickname if set.
   const friendName = (f) => (f && (f.nickname || f.displayName)) || '';
 
-  // Emoji-only messages (1–3 emoji) render as big "stickers".
-  const STICKER_RE = (() => {
-    try {
-      return {
-        only: new RegExp('^[\\p{Extended_Pictographic}\\u200D\\uFE0F\\u{1F3FB}-\\u{1F3FF}\\s]+$', 'u'),
-        pic: new RegExp('\\p{Extended_Pictographic}', 'gu'),
-      };
-    } catch (e) { return null; }
-  })();
-  function isStickerText(s) {
-    if (!s || !STICKER_RE) return false;
-    const t = s.trim();
-    if (!t || !STICKER_RE.only.test(t)) return false;
-    const m = t.match(STICKER_RE.pic);
-    return !!m && m.length >= 1 && m.length <= 3;
-  }
-
   function avatarHtml(user, opts = {}) {
     const cls = opts.cls || '';
     const color = user.avatarColor || '#0084ff';
@@ -878,8 +861,6 @@
     } else if (m.attachmentType === 'file') {
       const cap = m.body ? `<div class="caption">${escapeHtml(m.body)}</div>` : '';
       inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
-    } else if (isStickerText(m.body)) {
-      inner = `<div class="bubble sticker">${escapeHtml(m.body)}</div>`;
     } else {
       inner = `<div class="bubble">${escapeHtml(m.body)}</div>`;
     }
@@ -1495,10 +1476,7 @@
   // MESSAGE ACTIONS (react · unsend · copy) — long-press / right-click
   // ============================================================
   const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
-  // Big emoji "stickers" — sent as a one-emoji message, rendered jumbo. Works on
-  // every device (no external GIF service needed).
-  const STICKERS = ['😂','🥰','😍','😎','🥳','😭','😡','🤔','😴','🤗','🥺','😘','🙄','😏','🤩','😅','🤣','😱','👍','👎','👏','🙏','💪','👌','✌️','🤝','🔥','💯','✨','🎉','🎊','💖','💔','❤️','💜','💙','💚','🧡','🌹','🌸','🍀','⭐','🌙','⚡','💀','👻','🤡','💩','🤖','👀','🎂','🍻','☕','🍵','🍕','🍔','⚽','🏀','🎮','🚀','🏆','🐶','🐱','🐼','🦄','🌈'];
-  const EMOJI_PICKER = ['👍','👎','❤️','🔥','😂','🤣','😊','😍','🥰','😘','😎','🤩','😋','😅','😭','😢','😡','🤬','😱','😨','😴','🤔','🙄','😏','😬','🤗','🥺','🙏','👏','🙌','💪','👌','✌️','🤝','💯','✨','⭐','🎉','🎊','🥳','💀','👻','🤡','💩','🤖','👀','💔','💖','💕','💜','💙','💚','🧡','🤍','🌹','🌸','🍀','☀️','🌙','⚡','🍕','🍔','🍓','☕','🍵','🎂','🍻','⚽','🏀','🎮','🎵','📷','💸','🚀','🏆'];
+  const EMOJI_PICKER =['👍','👎','❤️','🔥','😂','🤣','😊','😍','🥰','😘','😎','🤩','😋','😅','😭','😢','😡','🤬','😱','😨','😴','🤔','🙄','😏','😬','🤗','🥺','🙏','👏','🙌','💪','👌','✌️','🤝','💯','✨','⭐','🎉','🎊','🥳','💀','👻','🤡','💩','🤖','👀','💔','💖','💕','💜','💙','💚','🧡','🤍','🌹','🌸','🍀','☀️','🌙','⚡','🍕','🍔','🍓','☕','🍵','🎂','🍻','⚽','🏀','🎮','🎵','📷','💸','🚀','🏆'];
   const messagesEl = $('#messages');
   let pressTimer = null;
   let touchState = null;
@@ -1727,42 +1705,6 @@
     overlay.addEventListener('click', (e) => {
       const pick = e.target.closest('[data-emoji]');
       if (pick) { reactToMessage(mid, pick.dataset.emoji); return close(); }
-      if (e.target.closest('[data-cancel]')) return close();
-      if (e.target === overlay && Date.now() - openedAt > 220) close();
-    });
-  }
-
-  // ---------- stickers (jumbo emoji) ----------
-  const stickerBtn = document.getElementById('sticker-btn');
-  if (stickerBtn) stickerBtn.addEventListener('click', openStickerPicker);
-
-  function sendSticker(emoji) {
-    if (!state.current || !state.socket) return;
-    if (state.current.peer && state.current.peer.iBlocked) { toast('🚫', 'Blocked', 'Unblock to send'); return; }
-    state.socket.emit('message:send',
-      { ...sendTarget(), body: emoji, attachment: null, replyToId: null },
-      (resp) => { if (resp && resp.error) toast('⚠️', 'Not sent', resp.error); });
-  }
-
-  function openStickerPicker() {
-    if (!state.current) return;
-    const overlay = document.createElement('div');
-    overlay.className = 'msg-menu';
-    overlay.innerHTML = `
-      <div class="mm-sheet emoji-sheet">
-        <div class="settings-title">Stickers</div>
-        <div class="emoji-grid sticker-grid">
-          ${STICKERS.map((e) => `<button class="emoji-pick sticker-pick" data-sticker="${e}">${e}</button>`).join('')}
-        </div>
-        <button class="mm-act" data-cancel="1">Close</button>
-      </div>`;
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('show'));
-    const openedAt = Date.now();
-    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
-    overlay.addEventListener('click', (e) => {
-      const pick = e.target.closest('[data-sticker]');
-      if (pick) { sendSticker(pick.dataset.sticker); return close(); }
       if (e.target.closest('[data-cancel]')) return close();
       if (e.target === overlay && Date.now() - openedAt > 220) close();
     });

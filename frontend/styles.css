@@ -480,17 +480,6 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .msg.out .bubble { border-bottom-right-radius: 6px; }
 .msg.grouped.in .bubble { border-top-left-radius: 8px; }
 .msg.grouped.out .bubble { border-top-right-radius: 8px; }
-/* jumbo emoji "stickers" — no bubble background */
-.bubble.sticker, .msg.out .bubble.sticker, .msg.in .bubble.sticker {
-  background: transparent !important;
-  box-shadow: none !important;
-  color: inherit;
-  padding: 2px;
-  font-size: 58px;
-  line-height: 1.05;
-  border-radius: 0;
-}
-.msg:hover .bubble.sticker { transform: none; }
 
 .bubble.media { padding: 4px; background: transparent !important; box-shadow: none; }
 .bubble.media img, .bubble.media video {
@@ -780,10 +769,6 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .emoji-pick { border: none; background: transparent; font-size: 25px; padding: 7px 0; border-radius: 12px; transition: transform .1s var(--ease), background .12s var(--ease); }
 .emoji-pick:hover { background: var(--hover); }
 .emoji-pick:active { transform: scale(1.25); }
-.sticker-grid { grid-template-columns: repeat(5, 1fr); gap: 4px; }
-.sticker-pick { font-size: 40px; padding: 8px 0; }
-.sticker-pick:active { transform: scale(1.2); }
-.sticker-btn { color: var(--text-soft); flex-shrink: 0; }
 .mm-actions { background: var(--elev); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); }
 .mm-act { display: block; width: 100%; border: none; background: transparent; color: var(--text); padding: 15px 18px; font-size: 16px; font-weight: 600; text-align: center; border-bottom: 1px solid var(--line); transition: background .15s; }
 .mm-act:last-child { border-bottom: none; }
