@@ -1595,6 +1595,32 @@
     $('#lightbox').classList.add('hidden');
   }
 
+  // Save the open photo/video to the device (before it auto-expires at 24h).
+  const dlBtn = document.getElementById('lightbox-download');
+  if (dlBtn) dlBtn.addEventListener('click', async () => {
+    const el = $('#lightbox-body').querySelector('img, video');
+    if (!el) return;
+    const src = el.getAttribute('src');
+    const isVid = el.tagName === 'VIDEO';
+    dlBtn.classList.add('busy');
+    try {
+      const resp = await fetch(src, { mode: 'cors' });
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tea-' + Date.now() + (isVid ? '.mp4' : '.jpg');
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast('✅', 'Saved', isVid ? 'Video downloaded' : 'Photo downloaded');
+    } catch (e) {
+      // CORS / iOS fallback: open it so they can long-press → Save
+      window.open(src, '_blank');
+    } finally {
+      dlBtn.classList.remove('busy');
+    }
+  });
+
   // Pinch / wheel / double-tap zoom + drag-to-pan for the lightbox image.
   function setupImageZoom(img) {
     if (!img) return;

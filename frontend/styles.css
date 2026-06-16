@@ -1132,3 +1132,15 @@ html.resume #auth-screen { display: none; }
   box-shadow: 0 2px 6px rgba(0,0,0,.25);
 }
 @keyframes popIn { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+
+/* lightbox save/download button */
+.lightbox-dl {
+  position: absolute; top: calc(18px + var(--safe-top)); right: 74px;
+  width: 44px; height: 44px; border-radius: 50%; border: none;
+  background: rgba(255, 255, 255, .16); color: #fff;
+  display: flex; align-items: center; justify-content: center; z-index: 2;
+  transition: background .15s var(--ease), transform .12s var(--ease);
+}
+.lightbox-dl:hover { background: rgba(255, 255, 255, .28); }
+.lightbox-dl:active { transform: scale(.9); }
+.lightbox-dl.busy { opacity: .5; pointer-events: none; }
