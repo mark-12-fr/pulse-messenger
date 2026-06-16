@@ -1176,18 +1176,106 @@
 
   // ---------- attachments ----------
   const fileInput = $('#file-input');
-  $('#attach-btn').addEventListener('click', () => fileInput.click());
+  const cameraInput = document.getElementById('camera-input');
+  $('#attach-btn').addEventListener('click', openAttachMenu);
+
+  function openAttachMenu() {
+    if (!state.current) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="mm-actions">
+          <button class="mm-act" data-att="camera">Camera</button>
+          <button class="mm-act" data-att="media">Photo &amp; Video</button>
+          <button class="mm-act" data-att="file">File</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const openedAt = Date.now();
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-att]');
+      if (a) {
+        const kind = a.dataset.att;
+        close();
+        if (kind === 'camera') { cameraInput.click(); }
+        else if (kind === 'media') { fileInput.accept = 'image/*,video/*'; fileInput.click(); }
+        else { fileInput.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt,.zip'; fileInput.click(); }
+        return;
+      }
+      if (e.target.closest('[data-cancel]')) return close();
+      if (e.target === overlay && Date.now() - openedAt > 200) close();
+    });
+  }
+
+  async function handlePickedFiles(files) {
+    files = Array.from(files || []);
+    if (!files.length) return;
+    const tooBig = files.find((f) => f.size > 50 * 1024 * 1024);
+    if (tooBig) { toast('⚠️', 'Too large', 'Max file size is 50 MB.'); return; }
+    if (files.length === 1) { await uploadAttachment(files[0]); return; }
+    await sendMultipleFiles(files);
+  }
+
+  // Send several files at once (album) — each becomes its own message.
+  async function sendMultipleFiles(files) {
+    if (!state.current || !state.socket) return;
+    toast('📨', 'Sending', `Uploading ${files.length} items…`);
+    for (const f of files) {
+      try {
+        let file = f;
+        if (f.type.startsWith('image/')) { try { file = await compressImage(f); } catch (e) {} }
+        const fd = new FormData();
+        fd.append('file', file);
+        const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+        if (!state.current) return;
+        state.socket.emit('message:send', {
+          ...sendTarget(), body: '',
+          attachment: { url: data.url, type: data.type, name: data.name, size: data.size },
+          replyToId: null,
+        });
+      } catch (e) { toast('⚠️', 'Upload failed', e.message); }
+    }
+  }
 
   fileInput.addEventListener('change', async () => {
-    const file = fileInput.files[0];
+    const files = fileInput.files;
     fileInput.value = '';
-    if (!file) return;
-    if (file.size > 50 * 1024 * 1024) {
-      toast('⚠️', 'Too large', 'Max file size is 50 MB.');
-      return;
-    }
-    await uploadAttachment(file);
+    await handlePickedFiles(files);
   });
+  if (cameraInput) cameraInput.addEventListener('change', async () => {
+    const file = cameraInput.files[0];
+    cameraInput.value = '';
+    if (file) await uploadAttachment(file);
+  });
+
+  // Paste an image straight into the composer
+  msgInput.addEventListener('paste', (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        const f = it.getAsFile();
+        if (f) { e.preventDefault(); uploadAttachment(f); return; }
+      }
+    }
+  });
+
+  // Drag & drop files onto the chat
+  (function () {
+    const drop = document.getElementById('chat-active');
+    if (!drop) return;
+    let depth = 0;
+    drop.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; if (state.current) drop.classList.add('drag-over'); });
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); });
+    drop.addEventListener('dragleave', (e) => { e.preventDefault(); if (--depth <= 0) drop.classList.remove('drag-over'); });
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault(); depth = 0; drop.classList.remove('drag-over');
+      if (state.current) handlePickedFiles(e.dataTransfer && e.dataTransfer.files);
+    });
+  })();
 
   // Resize + re-encode photos to JPEG before upload. This shrinks big iPhone
   // photos (lighter storage) AND converts HEIC/HEIF so every device can view it.
@@ -1437,6 +1525,7 @@
       <button class="vp-btn" data-vp-toggle aria-label="Play">${IC.play}</button>
       <div class="vp-track" data-vp-track><div class="vp-fill"></div></div>
       <span class="vp-dur">${escapeHtml(label)}</span>
+      <button class="vp-speed" data-vp-speed aria-label="Playback speed">1×</button>
       <audio src="${escapeHtml(mediaUrl(m.attachmentUrl))}" preload="metadata"></audio>
     </div>`;
   }
@@ -1641,6 +1730,15 @@
         const rect = track.getBoundingClientRect();
         audio.currentTime = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * audio.duration;
       }
+      return;
+    }
+    const sp = e.target.closest('[data-vp-speed]');
+    if (sp) {
+      const audio = sp.closest('.vp').querySelector('audio');
+      const speeds = [1, 1.5, 2];
+      const next = speeds[(speeds.indexOf(audio.playbackRate || 1) + 1) % speeds.length] || 1;
+      audio.playbackRate = next;
+      sp.textContent = next + '×';
       return;
     }
     const light = e.target.closest('[data-light]');
