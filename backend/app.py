@@ -726,6 +726,19 @@ def leave_group(cid):
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
+@app.post("/api/upload/sign")
+@auth_required
+def upload_sign():
+    """Return a signed URL so the client can upload directly to Supabase."""
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "file")[:200]
+    prefix = "avatars" if data.get("kind") == "avatar" else ""
+    info = storage.create_signed_upload(name, prefix=prefix)
+    if not info:
+        return jsonify(error="Direct upload unavailable."), 503
+    return jsonify(info)
+
+
 @app.post("/api/upload")
 @auth_required
 def upload():

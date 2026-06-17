@@ -1475,9 +1475,7 @@
       try {
         let file = f;
         if (f.type.startsWith('image/')) { try { file = await compressImage(f); } catch (e) {} }
-        const fd = new FormData();
-        fd.append('file', file);
-        const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+        const data = await uploadBlob(file, '');
         if (!state.current) return;
         state.socket.emit('message:send', {
           ...sendTarget(), body: '',
@@ -1561,6 +1559,36 @@
     });
   }
 
+  function attachTypeFor(file) {
+    const t = (file && file.type) || '';
+    if (t.startsWith('image/')) return 'image';
+    if (t.startsWith('video/')) return 'video';
+    if (t.startsWith('audio/')) return 'audio';
+    return 'file';
+  }
+
+  // Upload a file. Fast path: ask the server for a signed URL and PUT the bytes
+  // straight to Supabase (one hop, no Render in the byte path → fast, no cold-start
+  // upload errors). Falls back to uploading through our backend if signing fails.
+  async function uploadBlob(file, kind) {
+    try {
+      const sign = await api('/api/upload/sign', { method: 'POST', body: { name: file.name || 'file', kind: kind || '' } });
+      if (sign && sign.uploadUrl) {
+        const put = await fetch(sign.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
+          body: file,
+        });
+        if (put.ok) return { url: sign.publicUrl, type: attachTypeFor(file), name: file.name || 'file', size: file.size };
+      }
+    } catch (e) { /* fall back to server upload */ }
+    const fd = new FormData();
+    fd.append('file', file);
+    if (kind) fd.append('kind', kind);
+    const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+    return { url: data.url, type: data.type, name: data.name, size: data.size };
+  }
+
   async function uploadAttachment(file) {
     const isImg = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(file.name || '');
     const isVid = file.type.startsWith('video/');
@@ -1568,10 +1596,8 @@
     const localUrl = (isImg || isVid) ? URL.createObjectURL(file) : null;
     showAttachPreview({ name: file.name, size: file.size, localUrl, isImg, isVid, uploading: true });
 
-    const fd = new FormData();
-    fd.append('file', file);
     try {
-      const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+      const data = await uploadBlob(file, '');
       state.attachment = { url: data.url, type: data.type, name: data.name, size: data.size };
       showAttachPreview({ name: data.name, size: data.size, localUrl, isImg, isVid, uploading: false });
       refreshSendState();
@@ -1660,10 +1686,8 @@
 
   async function sendVoiceMessage(wavBlob, durationSec) {
     const file = new File([wavBlob], 'voice.wav', { type: 'audio/wav' });
-    const fd = new FormData();
-    fd.append('file', file);
     let data;
-    try { data = await api('/api/upload', { method: 'POST', body: fd, raw: true }); }
+    try { data = await uploadBlob(file, ''); }
     catch (e) { toast('⚠️', 'Upload failed', e.message); return; }
     state.socket.emit('message:send', {
       ...sendTarget(),
@@ -2803,10 +2827,7 @@
       if (!file) return;
       try {
         const img = await compressImage(file);
-        const fd = new FormData();
-        fd.append('file', img);
-        fd.append('kind', 'avatar');
-        const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+        const data = await uploadBlob(img, 'avatar');
         const r = await api('/api/groups/' + cid + '/photo', { method: 'POST', body: { avatarUrl: data.url } });
         applyGroupMeta(cid, r.group);
         toast('✅', 'Updated', 'Group photo changed');
@@ -3114,10 +3135,7 @@
       saveBtn.disabled = true;
       try {
         const img = await compressImage(file);
-        const fd = new FormData();
-        fd.append('file', img);
-        fd.append('kind', 'avatar');
-        const data = await api('/api/upload', { method: 'POST', body: fd, raw: true });
+        const data = await uploadBlob(img, 'avatar');
         avatarUrl = data.url;
         repaint();
       } catch (e2) {

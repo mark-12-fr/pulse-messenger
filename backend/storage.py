@@ -144,6 +144,42 @@ def save_file(file_storage, prefix=""):
     }
 
 
+def create_signed_upload(filename, prefix=""):
+    """Create a one-time signed upload URL so the CLIENT can PUT the file straight
+    to Supabase (no server hop → fast, no cold-start upload failures). Returns
+    {uploadUrl, publicUrl, path} or None if Supabase isn't configured / errored."""
+    if not _SUPABASE_READY:
+        return None
+    key = f"{int(time.time() * 1000)}-{secrets.token_hex(12)}{_safe_ext(filename)}"
+    prefix = "".join(c for c in (prefix or "") if c.isalnum() or c in "-_").strip("/")
+    if prefix:
+        key = f"{prefix}/{key}"
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/upload/sign/{BUCKET}/{key}",
+            headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
+            timeout=20,
+        )
+        if resp.status_code not in (200, 201):
+            print(f"[storage] sign failed ({resp.status_code}): {resp.text[:200]}", flush=True)
+            return None
+        body = resp.json() or {}
+        token = body.get("token")
+        if not token and body.get("url"):
+            from urllib.parse import urlparse, parse_qs
+            token = parse_qs(urlparse(body["url"]).query).get("token", [None])[0]
+        if not token:
+            return None
+        return {
+            "uploadUrl": f"{SUPABASE_URL}/storage/v1/object/upload/sign/{BUCKET}/{key}?token={token}",
+            "publicUrl": f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}",
+            "path": key,
+        }
+    except Exception as e:
+        print(f"[storage] sign error: {e!r}", flush=True)
+        return None
+
+
 def _parse_iso(s):
     """Parse a Supabase ISO timestamp to a unix epoch (seconds). 0 on failure."""
     if not s:
