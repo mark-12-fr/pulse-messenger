@@ -1461,8 +1461,8 @@
   async function handlePickedFiles(files) {
     files = Array.from(files || []);
     if (!files.length) return;
-    const tooBig = files.find((f) => f.size > 50 * 1024 * 1024);
-    if (tooBig) { toast('⚠️', 'Too large', 'Max file size is 50 MB.'); return; }
+    const tooBig = files.find((f) => f.size > 100 * 1024 * 1024);
+    if (tooBig) { toast('⚠️', 'Too large', 'Max file size is 100 MB.'); return; }
     if (files.length === 1) { await uploadAttachment(files[0]); return; }
     await sendMultipleFiles(files);
   }

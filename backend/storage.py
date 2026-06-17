@@ -8,7 +8,9 @@ File storage for uploads.
 """
 
 import os
+import io
 import time
+import shutil
 import secrets
 from datetime import datetime
 
@@ -26,7 +28,7 @@ SUPABASE_KEY = (
 )
 BUCKET = os.environ.get("SUPABASE_BUCKET", "media")
 
-MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_BYTES = 100 * 1024 * 1024  # 100 MB (videos)
 
 # A configured Supabase URL still containing the placeholder is treated as "off".
 _SUPABASE_READY = bool(
@@ -68,8 +70,18 @@ def save_file(file_storage, prefix=""):
     ``avatars/`` prefix are kept permanently — the privacy auto-clear job only
     sweeps the bucket root, so profile photos survive the 3-hour message purge.
     """
-    data = file_storage.read()
-    if len(data) > MAX_BYTES:
+    # Determine size without loading the whole file into memory (big videos would
+    # OOM Render's small instance). Werkzeug spools large uploads to a temp file.
+    stream = file_storage.stream
+    try:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        stream.seek(0)
+    except Exception:
+        data = file_storage.read()
+        size = len(data)
+        stream = io.BytesIO(data)
+    if size > MAX_BYTES:
         raise TooLarge()
 
     mime = file_storage.mimetype or "application/octet-stream"
@@ -80,16 +92,18 @@ def save_file(file_storage, prefix=""):
 
     if _SUPABASE_READY:
         try:
+            stream.seek(0)
             endpoint = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}"
             resp = requests.post(
                 endpoint,
-                data=data,
+                data=stream,  # streamed, not buffered in memory
                 headers={
                     "Authorization": f"Bearer {SUPABASE_KEY}",
                     "Content-Type": mime,
+                    "Content-Length": str(size),
                     "x-upsert": "true",
                 },
-                timeout=60,
+                timeout=180,
             )
             if resp.status_code in (200, 201):
                 public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
@@ -97,7 +111,7 @@ def save_file(file_storage, prefix=""):
                     "url": public_url,
                     "type": attachment_type_for(mime),
                     "name": file_storage.filename,
-                    "size": len(data),
+                    "size": size,
                 }
             # Don't fail the whole upload — log the reason and fall back to local
             # storage so the user can still send the photo. A 400/401/403 here
@@ -116,13 +130,17 @@ def save_file(file_storage, prefix=""):
     # SUPABASE_SERVICE_ROLE_KEY for permanent photo storage.
     local_path = os.path.join(LOCAL_DIR, key)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    try:
+        stream.seek(0)
+    except Exception:
+        pass
     with open(local_path, "wb") as fp:
-        fp.write(data)
+        shutil.copyfileobj(stream, fp)
     return {
         "url": f"/uploads/{key}",
         "type": attachment_type_for(mime),
         "name": file_storage.filename,
-        "size": len(data),
+        "size": size,
     }
 
 

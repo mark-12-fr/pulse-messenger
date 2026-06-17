@@ -102,7 +102,7 @@ _origin_env = os.environ.get("FRONTEND_ORIGIN", "*")
 ORIGINS = "*" if _origin_env.strip() == "*" else [o.strip() for o in _origin_env.split(",") if o.strip()]
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB uploads
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB uploads (videos)
 CORS(app, resources={r"/api/*": {"origins": ORIGINS}})
 socketio = SocketIO(
     app,
@@ -738,7 +738,7 @@ def upload():
     try:
         info = storage.save_file(f, prefix=prefix)
     except storage.TooLarge:
-        return jsonify(error="File is too large (max 50 MB)."), 400
+        return jsonify(error="File is too large (max 100 MB)."), 400
     except Exception:
         return jsonify(error="Upload failed."), 400
     return jsonify(info)
@@ -746,7 +746,7 @@ def upload():
 
 @app.errorhandler(413)
 def too_large(_e):
-    return jsonify(error="File is too large (max 50 MB)."), 413
+    return jsonify(error="File is too large (max 100 MB)."), 413
 
 
 # Serve locally-stored uploads (only used when Supabase Storage is not configured).
