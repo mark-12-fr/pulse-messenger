@@ -1489,7 +1489,9 @@
   }
 
   fileInput.addEventListener('change', async () => {
-    const files = fileInput.files;
+    // snapshot to an array BEFORE clearing the input — fileInput.files is a live
+    // list that resetting value='' empties (breaks video/file picking on iOS).
+    const files = Array.from(fileInput.files || []);
     fileInput.value = '';
     await handlePickedFiles(files);
   });
