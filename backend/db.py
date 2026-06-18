@@ -210,6 +210,67 @@ def _iso(dt):
     return dt.isoformat()
 
 
+# ---------------------------------------------------------------------------
+# Message encryption-at-rest. Message text is stored encrypted in the DB so a
+# database leak shows ciphertext, not conversations. The key comes from the
+# MESSAGE_ENC_KEY env var when set (best — kept OUT of the database); otherwise a
+# key is generated and stored in app_config so it still works out of the box.
+# ---------------------------------------------------------------------------
+try:
+    from cryptography.fernet import Fernet
+    _FERNET_OK = True
+except Exception:
+    _FERNET_OK = False
+
+_fernet_cache = None
+
+
+def _get_fernet():
+    global _fernet_cache
+    if _fernet_cache is not None:
+        return _fernet_cache
+    if not _FERNET_OK:
+        _fernet_cache = False
+        return False
+    key = os.environ.get("MESSAGE_ENC_KEY")
+    if not key:
+        key = get_config("msg_enc_key")
+        if not key:
+            key = Fernet.generate_key().decode("ascii")
+            set_config("msg_enc_key", key)
+    try:
+        _fernet_cache = Fernet(key.encode("ascii") if isinstance(key, str) else key)
+    except Exception:
+        _fernet_cache = False
+    return _fernet_cache
+
+
+def _enc(text):
+    """Encrypt message text for storage. Returns an 'enc:'-prefixed token."""
+    if not text:
+        return text
+    f = _get_fernet()
+    if not f:
+        return text
+    try:
+        return "enc:" + f.encrypt(text.encode("utf-8")).decode("ascii")
+    except Exception:
+        return text
+
+
+def _dec(text):
+    """Decrypt stored message text. Plaintext (legacy / unencrypted) is returned as-is."""
+    if not text or not isinstance(text, str) or not text.startswith("enc:"):
+        return text
+    f = _get_fernet()
+    if not f:
+        return text
+    try:
+        return f.decrypt(text[4:].encode("ascii")).decode("utf-8")
+    except Exception:
+        return text
+
+
 def public_user(u):
     if not u:
         return None
@@ -230,7 +291,7 @@ def public_message(m):
         "id": m.id,
         "conversationId": m.conversation_id,
         "senderId": m.sender_id,
-        "body": m.body,
+        "body": _dec(m.body),
         "attachmentUrl": m.attachment_url,
         "attachmentType": m.attachment_type,
         "attachmentName": m.attachment_name,
@@ -253,7 +314,7 @@ def _msg_preview(m):
         return "🎤 Voice message"
     if m.attachment_type == "file":
         return "📎 " + (m.attachment_name or "File")
-    return (m.body or "")[:80]
+    return (_dec(m.body) or "")[:80]
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +707,7 @@ def create_message(conversation_id, sender_id, body=None,
     with session_scope() as s:
         m = Message(
             conversation_id=conversation_id, sender_id=sender_id,
-            body=body or None, attachment_url=attachment_url or None,
+            body=(_enc(body) if body else None), attachment_url=attachment_url or None,
             attachment_type=attachment_type or None, attachment_name=attachment_name or None,
             reply_to_id=reply_to_id or None,
             created_at=now_utc(),
@@ -772,7 +833,7 @@ def edit_message(message_id, new_body):
         m = s.get(Message, message_id)
         if not m or m.unsent:
             return
-        m.body = new_body
+        m.body = _enc(new_body)
         m.edited = True
 
 
