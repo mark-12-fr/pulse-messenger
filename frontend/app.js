@@ -3213,11 +3213,6 @@
     meta.setAttribute('content', cur === 'light' ? '#ffffff' : '#0a0a0f');
     document.head.appendChild(meta);
 
-    const btn = document.getElementById('theme-btn');
-    if (btn) btn.addEventListener('click', () => {
-      const c = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-      applyTheme(c === 'dark' ? 'light' : 'dark');
-    });
     try {
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
         if (!localStorage.getItem(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
@@ -3444,15 +3439,6 @@
         else if (st === 'denied') toast('🔕', 'Blocked', 'Enable notifications in your browser settings');
         else toast('ℹ️', 'Not supported', 'Add Tea to your home screen first (iPhone: Share → Add to Home Screen)');
         renderNotif();
-        return;
-      }
-      if (e.target.closest('[data-notif-test]')) {
-        try {
-          const r = await api('/api/push/test', { method: 'POST' });
-          if (r.sent > 0) toast('📨', 'Sent', 'Check your notification bar / lock screen');
-          else if (r.subs === 0) toast('🔕', 'No devices', 'Turn Notifications on first');
-          else toast('⚠️', 'Not delivered', r.error || 'Unknown error');
-        } catch (e2) { toast('⚠️', 'Error', e2.message); }
         return;
       }
       if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }
