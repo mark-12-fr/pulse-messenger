@@ -197,6 +197,10 @@ class Block(Base):
 
 def init_db():
     Base.metadata.create_all(engine)
+    try:
+        _get_fernet()  # warm the message-encryption key at startup
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -263,12 +267,12 @@ def _dec(text):
     if not text or not isinstance(text, str) or not text.startswith("enc:"):
         return text
     f = _get_fernet()
-    if not f:
-        return text
-    try:
-        return f.decrypt(text[4:].encode("ascii")).decode("utf-8")
-    except Exception:
-        return text
+    if f:
+        try:
+            return f.decrypt(text[4:].encode("ascii")).decode("utf-8")
+        except Exception:
+            pass
+    return ""  # enc-prefixed but undecryptable (e.g. key changed) → never show raw ciphertext
 
 
 def public_user(u):
