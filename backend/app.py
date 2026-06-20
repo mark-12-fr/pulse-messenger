@@ -170,6 +170,11 @@ def is_online(uid):
     return uid in online and len(online[uid]) > 0
 
 
+def online_visible(uid):
+    """Online status as shown to OTHERS — hidden if the user turned off last seen."""
+    return is_online(uid) and not db.user_hides_presence(uid)
+
+
 def is_active(uid):
     """True if any of the user's sessions has the app in the foreground."""
     return any(sid in active_sids for sid in online.get(uid, ()))
@@ -188,6 +193,9 @@ def emit_conv(conv, event, data, exclude=None):
 
 def broadcast_presence(uid, up):
     me = db.get_user_by_id(uid)
+    # Don't reveal presence at all for users who hide their last seen.
+    if me and me.get("hideLastSeen"):
+        return
     last_seen = me["lastSeen"] if me else None
     for f in db.list_friends(uid):
         emit_to_user(f["id"], "presence", {"userId": uid, "online": up, "lastSeen": last_seen})
@@ -196,8 +204,8 @@ def broadcast_presence(uid, up):
 def notify_friend_accepted(a, b):
     conv = db.get_or_create_conversation(a, b)
     ua, ub = db.get_user_by_id(a), db.get_user_by_id(b)
-    emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": is_online(b), "conversationId": conv["id"]}})
-    emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": is_online(a), "conversationId": conv["id"]}})
+    emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": online_visible(b), "conversationId": conv["id"]}})
+    emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": online_visible(a), "conversationId": conv["id"]}})
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +412,22 @@ def logout_others():
     return jsonify(ok=True, token=token)
 
 
+@app.post("/api/me/privacy")
+@auth_required
+def update_privacy():
+    data = request.get_json(silent=True) or {}
+    hls = data.get("hideLastSeen")
+    hrr = data.get("hideReadReceipts")
+    me = db.set_privacy(
+        g.user["id"],
+        hide_last_seen=None if hls is None else bool(hls),
+        hide_read_receipts=None if hrr is None else bool(hrr),
+    )
+    if not me:
+        return jsonify(error="Not found"), 404
+    return jsonify(ok=True, me=me)
+
+
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
@@ -415,7 +439,7 @@ def search():
         return jsonify(users=[])
     rows = db.search_users(g.user["id"], q)
     users = [
-        {**u, "online": is_online(u["id"]), "relationship": db.relationship(g.user["id"], u["id"])}
+        {**u, "online": online_visible(u["id"]), "relationship": db.relationship(g.user["id"], u["id"])}
         for u in rows
     ]
     return jsonify(users=users)
@@ -449,7 +473,7 @@ def friend_request():
         return jsonify(error="Friend request already sent."), 409
 
     db.create_friend_request(me_id, target_id)
-    emit_to_user(target_id, "friend:request", {"from": {**g.user, "online": is_online(me_id)}})
+    emit_to_user(target_id, "friend:request", {"from": {**g.user, "online": online_visible(me_id)}})
     return jsonify(ok=True, status="pending")
 
 
@@ -495,7 +519,7 @@ def friends():
     out = []
     for u in rows:
         conv = db.get_or_create_conversation(me_id, u["id"])
-        out.append({**u, "online": is_online(u["id"]), "conversationId": conv["id"],
+        out.append({**u, "online": online_visible(u["id"]), "conversationId": conv["id"],
                     "nickname": nicks.get(u["id"])})
     return jsonify(friends=out)
 
@@ -543,7 +567,7 @@ def friend_unblock():
 @auth_required
 def friend_requests():
     me_id = g.user["id"]
-    incoming = [{**r, "online": is_online(r["id"])} for r in db.incoming_requests(me_id)]
+    incoming = [{**r, "online": online_visible(r["id"])} for r in db.incoming_requests(me_id)]
     outgoing = db.outgoing_requests(me_id)
     return jsonify(incoming=incoming, outgoing=outgoing)
 
@@ -606,14 +630,14 @@ def conversation_messages(cid):
     # --- 1-to-1 conversation ---
     partner_id = db.conversation_partner_id(conv, me_id)
     partner = db.get_user_by_id(partner_id)
-    if messages:
+    if messages and not db.user_hides_receipts(me_id):
         emit_to_user(partner_id, "message:read",
                      {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": messages[-1]["id"]})
     return jsonify(
         messages=messages,
         hasMore=has_more,
         pinnedMessage=pinned,
-        friend={**partner, "online": is_online(partner_id),
+        friend={**partner, "online": online_visible(partner_id),
                 "iBlocked": db.i_blocked(me_id, partner_id),
                 "blockedMe": db.i_blocked(partner_id, me_id)},
         partnerLastRead=db.get_last_read(cid, partner_id),
@@ -1187,8 +1211,9 @@ def on_message_read(payload):
     db.mark_read(cid, uid, last["id"])
     # Reading implies delivered too — keep the delivered marker in step.
     db.mark_conversation_delivered(cid, uid)
-    # Per-message seen ticks are only shown in 1-to-1 chats.
-    if not conv.get("is_group"):
+    # Per-message seen ticks are only shown in 1-to-1 chats (and not if the
+    # reader has turned off read receipts).
+    if not conv.get("is_group") and not db.user_hides_receipts(uid):
         partner_id = db.conversation_partner_id(conv, uid)
         emit_to_user(partner_id, "message:read",
                      {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})

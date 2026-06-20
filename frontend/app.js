@@ -4298,6 +4298,13 @@
             ${ACCENTS.map((a) => `<button class="swatch ${curAccent === a.id ? 'on' : ''}" data-accent="${a.id}" style="background:linear-gradient(135deg,${a.c1},${a.c2})" aria-label="${a.id}"></button>`).join('')}
           </div>
         </div>
+        <div class="set-section">
+          <div class="set-label">Privacy</div>
+          <div class="set-list">
+            <button class="set-row" data-priv="hideLastSeen"><span class="set-main">${IC.eyeOff}<span>Hide last seen &amp; online</span></span><span class="set-toggle ${state.me && state.me.hideLastSeen ? 'on' : ''}"></span></button>
+            <button class="set-row" data-priv="hideReadReceipts"><span class="set-main">${IC.tick2}<span>Hide read receipts</span></span><span class="set-toggle ${state.me && state.me.hideReadReceipts ? 'on' : ''}"></span></button>
+          </div>
+        </div>
         <div class="set-section set-list">
           <button class="set-row" data-notif="1"><span class="set-main">${IC.bell}<span>Notifications</span></span><span class="set-state" id="set-notif">…</span></button>
           <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
@@ -4324,6 +4331,22 @@
       if (ts) { applyTheme(ts.dataset.themeSet); overlay.querySelectorAll('[data-theme-set]').forEach((b) => b.classList.toggle('on', b === ts)); return; }
       const sw = e.target.closest('[data-accent]');
       if (sw) { applyAccent(sw.dataset.accent); overlay.querySelectorAll('.swatch').forEach((b) => b.classList.toggle('on', b === sw)); return; }
+      const pv = e.target.closest('[data-priv]');
+      if (pv) {
+        const key = pv.dataset.priv;
+        const next = !(state.me && state.me[key]);
+        if (state.me) state.me[key] = next;
+        pv.querySelector('.set-toggle').classList.toggle('on', next);
+        try {
+          const r = await api('/api/me/privacy', { method: 'POST', body: { [key]: next } });
+          if (r && r.me) Object.assign(state.me, r.me);
+        } catch (err) {
+          if (state.me) state.me[key] = !next;
+          pv.querySelector('.set-toggle').classList.toggle('on', !next);
+          toast('⚠️', 'Error', 'Could not save setting');
+        }
+        return;
+      }
       if (e.target.closest('[data-notif]')) {
         const st = await pushState();
         if (st === 'on') await disablePush();

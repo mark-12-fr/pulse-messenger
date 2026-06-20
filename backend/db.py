@@ -79,6 +79,8 @@ class User(Base):
     token_version = mapped_column(Integer, nullable=False, default=0)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
+    hide_last_seen = mapped_column(Boolean, nullable=False, default=False)
+    hide_read_receipts = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Friendship(Base):
@@ -338,14 +340,42 @@ def _dec(text):
 def public_user(u):
     if not u:
         return None
+    hide_seen = bool(getattr(u, "hide_last_seen", False))
     return {
         "id": u.id,
         "username": u.username,
         "displayName": u.display_name,
         "avatarColor": u.avatar_color,
         "avatarUrl": u.avatar_url,
-        "lastSeen": _iso(u.last_seen),
+        # When a user hides their last seen, never reveal the timestamp.
+        "lastSeen": None if hide_seen else _iso(u.last_seen),
+        "hideLastSeen": hide_seen,
+        "hideReadReceipts": bool(getattr(u, "hide_read_receipts", False)),
     }
+
+
+def user_hides_presence(uid):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        return bool(u and u.hide_last_seen)
+
+
+def user_hides_receipts(uid):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        return bool(u and u.hide_read_receipts)
+
+
+def set_privacy(uid, hide_last_seen=None, hide_read_receipts=None):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if not u:
+            return None
+        if hide_last_seen is not None:
+            u.hide_last_seen = bool(hide_last_seen)
+        if hide_read_receipts is not None:
+            u.hide_read_receipts = bool(hide_read_receipts)
+        return public_user(u)
 
 
 def public_message(m):
