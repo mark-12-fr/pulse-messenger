@@ -124,6 +124,8 @@ class Message(Base):
     attachment_name = mapped_column(Text, nullable=True)
     unsent = mapped_column(Boolean, nullable=False, default=False)
     edited = mapped_column(Boolean, nullable=False, default=False)
+    view_once = mapped_column(Boolean, nullable=False, default=False)
+    consumed = mapped_column(Boolean, nullable=False, default=False)
     reply_to_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
@@ -359,6 +361,8 @@ def public_message(m):
         "attachmentName": m.attachment_name,
         "unsent": bool(m.unsent),
         "edited": bool(m.edited),
+        "viewOnce": bool(m.view_once),
+        "consumed": bool(m.consumed),
         "createdAt": _iso(m.created_at),
         "reactions": [],
         "replyTo": None,
@@ -368,6 +372,8 @@ def public_message(m):
 def _msg_preview(m):
     if m.unsent:
         return "unsent a message"
+    if getattr(m, "view_once", False):
+        return "👁️ Photo"
     if m.attachment_type == "image":
         return "📷 Photo"
     if m.attachment_type == "video":
@@ -767,13 +773,14 @@ def public_conversation_meta(conv, me_id):
 # ---------------------------------------------------------------------------
 def create_message(conversation_id, sender_id, body=None,
                    attachment_url=None, attachment_type=None, attachment_name=None,
-                   reply_to_id=None):
+                   reply_to_id=None, view_once=False):
     with session_scope() as s:
         m = Message(
             conversation_id=conversation_id, sender_id=sender_id,
             body=(_enc(body) if body else None), attachment_url=attachment_url or None,
             attachment_type=attachment_type or None, attachment_name=attachment_name or None,
             reply_to_id=reply_to_id or None,
+            view_once=bool(view_once and attachment_url),
             created_at=now_utc(),
         )
         s.add(m)
@@ -784,6 +791,18 @@ def create_message(conversation_id, sender_id, body=None,
             if o:
                 d["replyTo"] = {"id": o.id, "senderId": o.sender_id, "preview": _msg_preview(o)}
         return d
+
+
+def consume_view_once(message_id, viewer_id):
+    """Mark a view-once message as opened by its recipient and wipe the media URL
+    so it can never be fetched again. Returns (conversationId, senderId) or None."""
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m or not m.view_once or m.consumed or m.sender_id == viewer_id:
+            return None
+        m.consumed = True
+        m.attachment_url = None
+        return {"conversationId": m.conversation_id, "senderId": m.sender_id}
 
 
 def get_messages(conversation_id, before_id=None, limit=40):

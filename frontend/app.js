@@ -474,6 +474,7 @@
     socket.on('message:delivered', onMessageDelivered);
     socket.on('message:reaction', onMessageReaction);
     socket.on('message:unsent', onMessageUnsent);
+    socket.on('message:consumed', onMessageConsumed);
     socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
     socket.on('conversation:pin', onConversationPin);
@@ -1241,7 +1242,16 @@
     const t = `<span class="m-time">${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}${tickHtml(m)}</span>`;
     const rx = reactionsHtml(m);
     let inner;
-    if (m.attachmentType === 'image') {
+    if (m.attachmentType === 'image' && m.viewOnce) {
+      const out = m.senderId === state.me.id;
+      if (m.consumed || (!out && !m.attachmentUrl)) {
+        inner = `<div class="bubble vonce opened">👁️ Opened</div>`;
+      } else if (out) {
+        inner = `<div class="bubble vonce">👁️ Photo · View once</div>`;
+      } else {
+        inner = `<div class="bubble vonce tap" data-vonce="${m.id}">👁️ View once · Tap to view</div>`;
+      }
+    } else if (m.attachmentType === 'image') {
       const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble media"><img src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="image" alt="image" loading="lazy">${cap}</div>`;
     } else if (m.attachmentType === 'video') {
@@ -1427,6 +1437,7 @@
       attachmentUrl: att ? att.url : null,
       attachmentType: att ? att.type : null,
       attachmentName: att ? att.name : null,
+      viewOnce: !!(att && att.viewOnce), consumed: false,
       unsent: false, edited: false,
       createdAt: new Date().toISOString(),
       reactions: [],
@@ -1471,10 +1482,13 @@
     if (!body && !state.attachment) return;
 
     const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const att = state.attachment
+      ? { ...state.attachment, viewOnce: !!(state.attachmentViewOnce && state.attachment.type === 'image') }
+      : null;
     const payload = {
       ...sendTarget(),
       body,
-      attachment: state.attachment,
+      attachment: att,
       replyToId: state.replyTo ? state.replyTo.id : null,
       clientId,
     };
@@ -1812,18 +1826,26 @@
     if (isImg && localUrl) thumb = `<img src="${localUrl}">`;
     else if (isVid && localUrl) thumb = `<video src="${localUrl}" muted></video>`;
     box.className = 'attach-preview' + (uploading ? ' uploading' : '');
+    const vonce = isImg ? `<button class="ap-vonce ${state.attachmentViewOnce ? 'on' : ''}" id="ap-vonce" title="View once" aria-label="View once">👁️</button>` : '';
     box.innerHTML = `
       ${thumb}
       <div class="ap-meta">
         <div class="ap-name">${escapeHtml(name)}</div>
-        <div class="ap-sub">${fmtSize(size)}</div>
+        <div class="ap-sub">${isImg && state.attachmentViewOnce ? 'View once · ' : ''}${fmtSize(size)}</div>
       </div>
+      ${vonce}
       <button class="ap-remove" id="ap-remove" aria-label="Remove">✕</button>`;
     box.classList.remove('hidden');
     $('#ap-remove').addEventListener('click', clearAttachment);
+    const vb = document.getElementById('ap-vonce');
+    if (vb) vb.addEventListener('click', () => {
+      state.attachmentViewOnce = !state.attachmentViewOnce;
+      showAttachPreview({ name, size, localUrl, isImg, isVid, uploading });
+    });
   }
   function clearAttachment() {
     state.attachment = null;
+    state.attachmentViewOnce = false;
     const box = $('#attach-preview');
     box.classList.add('hidden');
     box.innerHTML = '';
@@ -2195,6 +2217,17 @@
     // tap a reply quote -> jump to the original message
     const jump = e.target.closest('[data-reply-jump]');
     if (jump) { jumpToMessage(Number(jump.dataset.replyJump)); return; }
+    // tap a view-once photo -> open it once, then it's burned for everyone
+    const vonce = e.target.closest('[data-vonce]');
+    if (vonce) {
+      const mid = Number(vonce.dataset.vonce);
+      const mm = state.messages.find((x) => x.id === mid);
+      if (mm && mm.attachmentUrl && !mm.consumed) {
+        openLightbox('image', mediaUrl(mm.attachmentUrl));
+        if (state.socket) state.socket.emit('message:view-once', { messageId: mid });
+      }
+      return;
+    }
     // voice player: play/pause + scrub
     const toggle = e.target.closest('[data-vp-toggle]');
     if (toggle) {
@@ -2875,6 +2908,19 @@
     if (conv && conv.lastMessage && conv.lastMessage.id === payload.messageId) {
       conv.lastMessage = m || conv.lastMessage;
       renderChats();
+    }
+  }
+
+  // A view-once photo was opened by its recipient → burn it on both sides.
+  function onMessageConsumed(payload) {
+    if (!payload) return;
+    const m = (state.messages || []).find((x) => x.id === payload.messageId);
+    if (m) {
+      m.consumed = true; m.attachmentUrl = null;
+      if (state.current && state.current.conversationId === payload.conversationId) {
+        const bwrap = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"] .bwrap`);
+        if (bwrap) bwrap.outerHTML = renderBubble(m);
+      }
     }
   }
 
