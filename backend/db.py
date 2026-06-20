@@ -374,6 +374,8 @@ def _msg_preview(m):
         return "🎥 Video"
     if m.attachment_type == "audio":
         return "🎤 Voice message"
+    if m.attachment_type == "location":
+        return "📍 Location"
     if m.attachment_type == "file":
         return "📎 " + (m.attachment_name or "File")
     return (_dec(m.body) or "")[:80]
@@ -816,6 +818,25 @@ def get_messages(conversation_id, before_id=None, limit=40):
                     o = omap[mr.reply_to_id]
                     md["replyTo"] = {"id": o.id, "senderId": o.sender_id, "preview": _msg_preview(o)}
         return msgs
+
+
+def list_conversation_media(conversation_id, limit=60):
+    """Photos & videos shared in a conversation, newest first (for the profile
+    'shared media' grid). Never includes unsent messages."""
+    with session_scope() as s:
+        rows = s.execute(
+            select(Message).where(
+                Message.conversation_id == conversation_id,
+                Message.attachment_type.in_(("image", "video")),
+                Message.unsent == False,  # noqa: E712
+            ).order_by(Message.id.desc()).limit(max(1, min(int(limit or 60), 120)))
+        ).scalars().all()
+        return [{
+            "id": m.id,
+            "attachmentUrl": m.attachment_url,
+            "attachmentType": m.attachment_type,
+            "createdAt": _iso(m.created_at),
+        } for m in rows]
 
 
 def get_last_message(conversation_id):

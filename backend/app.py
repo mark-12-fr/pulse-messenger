@@ -620,6 +620,17 @@ def conversation_messages(cid):
     )
 
 
+@app.get("/api/conversations/<int:cid>/media")
+@auth_required
+def conversation_media(cid):
+    """Photos & videos shared in a chat — powers the profile 'shared media' grid."""
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Conversation not found."), 404
+    return jsonify(media=db.list_conversation_media(cid, limit=60))
+
+
 # ---------------------------------------------------------------------------
 # Group chats
 # ---------------------------------------------------------------------------

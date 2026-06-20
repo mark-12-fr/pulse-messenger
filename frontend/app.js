@@ -569,6 +569,7 @@
     if (msg.attachmentType === 'image') return who + '📷 Photo';
     if (msg.attachmentType === 'video') return who + '🎥 Video';
     if (msg.attachmentType === 'audio') return who + '🎤 Voice message';
+    if (msg.attachmentType === 'location') return who + '📍 Location';
     if (msg.attachmentType === 'file') return who + '📎 ' + (msg.attachmentName || 'File');
     return who + (msg.body || '');
   }
@@ -907,6 +908,7 @@
     $('#chat-empty').classList.add('hidden');
     $('#chat-active').classList.remove('hidden');
     appScreen.classList.add('in-chat');
+    applyWallpaper(conversationId);
 
     // header
     $('#peer-avatar').outerHTML = avatarHtml(peer, { dot: !!peer.online }).replace(
@@ -964,6 +966,7 @@
     $('#chat-empty').classList.add('hidden');
     $('#chat-active').classList.remove('hidden');
     appScreen.classList.add('in-chat');
+    applyWallpaper(cid);
     renderGroupHeader(state.current.group);
     $('#messages').innerHTML = `<div class="empty-note">Loading…</div>`;
 
@@ -1243,6 +1246,8 @@
       inner = `<div class="bubble media"><video src="${escapeHtml(mediaUrl(m.attachmentUrl))}" data-light="video" controls preload="metadata"></video>${cap}</div>`;
     } else if (m.attachmentType === 'audio') {
       inner = `<div class="bubble voice">${voicePlayerHtml(m)}</div>`;
+    } else if (m.attachmentType === 'location') {
+      inner = `<div class="bubble loc">${locationCardHtml(m)}</div>`;
     } else if (m.attachmentType === 'file') {
       const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
@@ -1250,6 +1255,21 @@
       inner = `<div class="bubble">${formatText(escapeHtml(m.body))}</div>`;
     }
     return `<div class="bwrap">${senderLabel}${replyQuoteHtml(m)}${inner}${rx}${t}</div>`;
+  }
+
+  const LOC_PIN_SVG = '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/></svg>';
+  // A shared-location bubble: a little pinned map tile that opens Google Maps.
+  function locationCardHtml(m) {
+    const url = mediaUrl(m.attachmentUrl || '');
+    const safeUrl = /^https?:\/\//i.test(url) ? url : '#';
+    const coords = String(m.attachmentName || '').trim();
+    const parts = coords.split(',').map((x) => parseFloat(x));
+    const sub = (parts.length === 2 && isFinite(parts[0]) && isFinite(parts[1]))
+      ? `${parts[0].toFixed(4)}, ${parts[1].toFixed(4)}` : escapeHtml(coords);
+    return `<a class="loc-card" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener">
+        <div class="loc-map"><span class="loc-pin">${LOC_PIN_SVG}</span></div>
+        <div class="loc-meta"><span class="loc-name">Shared location</span><span class="loc-sub">${sub}</span><span class="loc-open">Open in Maps ›</span></div>
+      </a>`;
   }
 
   // ---------- back button (mobile) ----------
@@ -1488,6 +1508,7 @@
         <div class="mm-actions">
           <button class="mm-act" data-att="camera">Camera</button>
           <button class="mm-act" data-att="media">Photo &amp; Video</button>
+          <button class="mm-act" data-att="location">📍 Location</button>
           <button class="mm-act" data-att="file">File</button>
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
@@ -1503,12 +1524,44 @@
         close();
         if (kind === 'camera') { cameraInput.click(); }
         else if (kind === 'media') { fileInput.accept = 'image/*,video/*'; fileInput.click(); }
+        else if (kind === 'location') { shareLocation(); }
         else { fileInput.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt,.zip'; fileInput.click(); }
         return;
       }
       if (e.target.closest('[data-cancel]')) return close();
       if (e.target === overlay && Date.now() - openedAt > 200) close();
     });
+  }
+
+  // Share my current location as a map message (no upload — just coordinates).
+  function shareLocation() {
+    if (!state.current) return;
+    if (!navigator.geolocation) {
+      toast('⚠️', 'Not supported', "Location isn't available on this device.");
+      return;
+    }
+    toast('📍', 'Locating…', 'Getting your current location.');
+    navigator.geolocation.getCurrentPosition((pos) => {
+      if (!state.current) return;
+      const lat = pos.coords.latitude, lng = pos.coords.longitude;
+      const url = `https://www.google.com/maps?q=${lat},${lng}`;
+      const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      const payload = {
+        ...sendTarget(), body: '',
+        attachment: { type: 'location', url, name: `${lat.toFixed(6)},${lng.toFixed(6)}` },
+        replyToId: null, clientId,
+      };
+      haptic();
+      optimisticSend(payload, clientId);
+      if (!state.socket || !state.socket.connected) queueOutbox(payload);
+      else state.socket.emit('message:send', payload, (resp) => {
+        if (resp && resp.error) toast('⚠️', 'Not sent', resp.error);
+      });
+    }, (err) => {
+      toast('⚠️', 'Location off', err && err.code === 1
+        ? 'Permission denied — enable location access to share.'
+        : "Couldn't get your location. Try again.");
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
   }
 
   async function handlePickedFiles(files) {
@@ -2187,6 +2240,18 @@
     $('#lightbox-body').innerHTML = '';
     $('#lightbox').classList.add('hidden');
   }
+  // Open the lightbox directly (used by the profile shared-media grid, which
+  // lives outside #messages so it can't rely on that delegated handler).
+  function openLightbox(type, src) {
+    const body = $('#lightbox-body');
+    if (type === 'video') {
+      body.innerHTML = `<video src="${escapeHtml(src)}" controls autoplay></video>`;
+    } else {
+      body.innerHTML = `<img class="lb-img" src="${escapeHtml(src)}" alt="">`;
+      setupImageZoom(body.querySelector('.lb-img'));
+    }
+    $('#lightbox').classList.remove('hidden');
+  }
 
   // Save the open photo/video to the device (before it auto-expires at 24h).
   const dlBtn = document.getElementById('lightbox-download');
@@ -2456,6 +2521,7 @@
     if (m.attachmentType === 'image') return '📷 Photo';
     if (m.attachmentType === 'video') return '🎥 Video';
     if (m.attachmentType === 'audio') return '🎤 Voice message';
+    if (m.attachmentType === 'location') return '📍 Location';
     if (m.attachmentType === 'file') return '📎 ' + (m.attachmentName || 'File');
     return (m.body || '').slice(0, 90);
   }
@@ -2844,6 +2910,15 @@
   const chatMoreBtn = document.getElementById('chat-more-btn');
   if (chatMoreBtn) chatMoreBtn.addEventListener('click', openChatMenu);
 
+  // Tap the header avatar/name → open profile (1-to-1) or member list (group).
+  const chatHeadEl = document.querySelector('.chat-head');
+  if (chatHeadEl) chatHeadEl.addEventListener('click', (e) => {
+    if (!e.target.closest('#peer-avatar') && !e.target.closest('.chat-peer')) return;
+    if (!state.current) return;
+    if (state.current.isGroup) openGroupMembers(state.current.group || {});
+    else openProfile(state.current.peer, state.current.conversationId);
+  });
+
   function openChatMenu() {
     if (!state.current) return;
     if (state.current.isGroup) return openGroupMenu();
@@ -2857,6 +2932,8 @@
         <div class="mm-actions">
           <button class="mm-act" data-pin="1">${conv.pinned ? 'Unpin' : 'Pin'} conversation</button>
           <button class="mm-act" data-mute="1">${conv.muted ? 'Unmute' : 'Mute'} notifications</button>
+          <button class="mm-act" data-profile="1">View profile</button>
+          <button class="mm-act" data-wallpaper="1">Chat wallpaper</button>
           <button class="mm-act" data-rename="1">Rename</button>
           <button class="mm-act" data-delconv="1">Delete conversation</button>
           <button class="mm-act ${peer.iBlocked ? '' : 'danger'}" data-block="1">${peer.iBlocked ? 'Unblock' : 'Block'} ${escapeHtml(friendName(peer))}</button>
@@ -2870,6 +2947,8 @@
     overlay.addEventListener('click', (e) => {
       if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
       if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
+      if (e.target.closest('[data-profile]')) { close(); openProfile(peer, cid); return; }
+      if (e.target.closest('[data-wallpaper]')) { close(); openWallpaperPicker(cid); return; }
       if (e.target.closest('[data-rename]')) { close(); openRenameFriend(peer); return; }
       if (e.target.closest('[data-delconv]')) { close(); if (confirm('Delete this conversation for both of you?')) deleteConversation(cid); return; }
       if (e.target.closest('[data-block]')) { close(); toggleBlock(peer, !peer.iBlocked); return; }
@@ -2891,6 +2970,7 @@
           <button class="mm-act" data-pin="1">${conv.pinned ? 'Unpin' : 'Pin'} conversation</button>
           <button class="mm-act" data-mute="1">${conv.muted ? 'Unmute' : 'Mute'} notifications</button>
           <button class="mm-act" data-members="1">View members (${n})</button>
+          <button class="mm-act" data-wallpaper="1">Chat wallpaper</button>
           <button class="mm-act" data-rename="1">Rename group</button>
           <button class="mm-act" data-photo="1">Change group photo</button>
           <button class="mm-act" data-add="1">Add people</button>
@@ -2906,6 +2986,7 @@
       if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
       if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
       if (e.target.closest('[data-members]')) { close(); openGroupMembers(group); return; }
+      if (e.target.closest('[data-wallpaper]')) { close(); openWallpaperPicker(cid); return; }
       if (e.target.closest('[data-rename]')) { close(); openRenameGroup(cid, group); return; }
       if (e.target.closest('[data-photo]')) { close(); changeGroupPhoto(cid); return; }
       if (e.target.closest('[data-add]')) { close(); openAddMembers(cid, group); return; }
@@ -2913,6 +2994,113 @@
       if (e.target.closest('[data-leave]')) { close(); if (confirm('Leave “' + (group.name || 'this group') + '”?')) leaveGroup(cid); return; }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
     });
+  }
+
+  // ---------- chat wallpapers (per-conversation, stored locally) ----------
+  const WALLPAPERS = [
+    { id: '', label: 'Default', css: '' },
+    { id: 'aurora', label: 'Aurora', css: 'linear-gradient(160deg,#0f2027,#203a43 55%,#2c5364)' },
+    { id: 'ocean', label: 'Ocean', css: 'linear-gradient(160deg,#0c4a6e,#0e7490 60%,#155e75)' },
+    { id: 'dusk', label: 'Dusk', css: 'linear-gradient(160deg,#2b1055,#7597de)' },
+    { id: 'rose', label: 'Rose', css: 'linear-gradient(160deg,#4a044e,#9d174d 60%,#be123c)' },
+    { id: 'forest', label: 'Forest', css: 'linear-gradient(160deg,#052e16,#166534 60%,#3f6212)' },
+    { id: 'charcoal', label: 'Charcoal', css: 'linear-gradient(160deg,#111827,#1f2937 60%,#374151)' },
+    { id: 'sky', label: 'Sky', css: 'linear-gradient(160deg,#e0f2fe,#bae6fd 60%,#7dd3fc)' },
+    { id: 'sand', label: 'Sand', css: 'linear-gradient(160deg,#fef3c7,#fde68a 60%,#fcd34d)' },
+  ];
+  function wpFor(cid) { try { return localStorage.getItem('tea_wp_' + cid) || ''; } catch (e) { return ''; } }
+  function applyWallpaper(cid) {
+    if (!messagesEl) return;
+    const wp = WALLPAPERS.find((w) => w.id === wpFor(cid));
+    if (wp && wp.css) {
+      messagesEl.style.backgroundImage = wp.css;
+      messagesEl.style.backgroundSize = 'cover';
+      messagesEl.style.backgroundPosition = 'center';
+      messagesEl.classList.add('has-wp');
+    } else {
+      messagesEl.style.backgroundImage = '';
+      messagesEl.style.backgroundSize = '';
+      messagesEl.style.backgroundPosition = '';
+      messagesEl.classList.remove('has-wp');
+    }
+  }
+  function openWallpaperPicker(cid) {
+    const cur = wpFor(cid);
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu wp-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="mm-title">Chat wallpaper</div>
+        <div class="wp-grid">
+          ${WALLPAPERS.map((w) => `
+            <button class="wp-tile ${w.id === cur ? 'sel' : ''}" data-wp="${w.id}">
+              <span class="wp-swatch" style="background:${w.css || 'var(--surface)'}">${w.id ? '' : 'Aa'}</span>
+              <span class="wp-label">${escapeHtml(w.label)}</span>
+            </button>`).join('')}
+        </div>
+        <div class="mm-actions"><button class="mm-act" data-cancel="1">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => {
+      const tile = e.target.closest('[data-wp]');
+      if (tile) {
+        const id = tile.dataset.wp || '';
+        try {
+          if (id) localStorage.setItem('tea_wp_' + cid, id);
+          else localStorage.removeItem('tea_wp_' + cid);
+        } catch (er) {}
+        if (state.current && state.current.conversationId === cid) applyWallpaper(cid);
+        haptic();
+        close();
+        return;
+      }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  // ---------- profile view (tap avatar → profile + shared media) ----------
+  async function openProfile(user, cid) {
+    if (!user) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'profile-modal';
+    overlay.innerHTML = `
+      <div class="pm-card">
+        <button class="pm-close" aria-label="Close">✕</button>
+        <div class="pm-head">
+          ${avatarHtml(user, { cls: 'pm-av', dot: !!user.online })}
+          <div class="pm-name">${escapeHtml(friendName(user) || user.displayName || 'User')}</div>
+          <div class="pm-user">@${escapeHtml(user.username || '')}</div>
+          <div class="pm-status">${escapeHtml(lastSeenText(user))}</div>
+        </div>
+        <div class="pm-media-title">Shared media</div>
+        <div class="pm-media" id="pm-media"><div class="pm-empty">Loading…</div></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target.closest('.pm-close') || e.target === overlay) { close(); return; }
+      const cell = e.target.closest('[data-media]');
+      if (cell) { openLightbox(cell.dataset.mtype, cell.dataset.src); }
+    });
+    const grid = overlay.querySelector('#pm-media');
+    if (!cid) { grid.innerHTML = `<div class="pm-empty">No shared chat yet.</div>`; return; }
+    try {
+      const data = await api('/api/conversations/' + cid + '/media');
+      const items = data.media || [];
+      if (!items.length) { grid.innerHTML = `<div class="pm-empty">No photos or videos yet.</div>`; return; }
+      grid.innerHTML = items.map((it) => {
+        const src = mediaUrl(it.attachmentUrl);
+        if (it.attachmentType === 'video') {
+          return `<button class="pm-cell" data-media="1" data-mtype="video" data-src="${escapeHtml(src)}"><video src="${escapeHtml(src)}#t=0.1" preload="metadata" muted playsinline></video><span class="pm-play">▶</span></button>`;
+        }
+        return `<button class="pm-cell" data-media="1" data-mtype="image" data-src="${escapeHtml(src)}"><img src="${escapeHtml(src)}" loading="lazy" alt=""></button>`;
+      }).join('');
+    } catch (er) {
+      grid.innerHTML = `<div class="pm-empty">Couldn't load media.</div>`;
+    }
   }
 
   function openGroupMembers(group) {
