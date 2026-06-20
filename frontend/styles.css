@@ -774,6 +774,16 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 
 /* ===== message wrapper · reactions · action sheet ===== */
 .bwrap { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+/* swipe-to-reply: a reply badge fades in to the left of the bubble as you drag */
+.msg.swiping .bwrap { position: relative; }
+.msg.swiping .bwrap::after {
+  content: '↩'; position: absolute; top: 50%; left: -38px;
+  transform: translateY(-50%) scale(calc(.6 + var(--swipe, 0) * .4));
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; opacity: var(--swipe, 0); pointer-events: none;
+}
 .msg.in .bwrap { align-items: flex-start; }
 .msg.out .bwrap { align-items: flex-end; }
 .msg .bwrap > .m-time { align-self: auto; }
