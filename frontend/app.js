@@ -3112,9 +3112,18 @@
   // ============================================================
   const RTC_CONFIG = {
     iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
+        'stun:stun3.l.google.com:19302',
+      ] },
     ],
+    // Connect faster: pre-gather a small candidate pool and bundle audio+video
+    // onto a single transport so there's only one ICE negotiation.
+    iceCandidatePoolSize: 4,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
   };
   const CALL_IC = {
     phone: '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.37 2.3.57 3.5.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.2.2 2.4.57 3.5a1 1 0 0 1-.24 1l-2.23 2.3Z"/></svg>',
@@ -3126,7 +3135,84 @@
     camOff: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16H4a1 1 0 0 1-1-1V7M9.5 6H16a1 1 0 0 1 1 1v6l4-4v8M2 2l20 20"/></svg>',
   };
   let activeCall = null;
-  let ringTimer = null;
+  let ringVibTimer = null;
+
+  // ---- call tones (generated with Web Audio — no asset, works offline) ----
+  let callAudioCtx = null, ringStop = null, ringAudioTimer = null;
+  function ensureAudioCtx() {
+    try {
+      if (!callAudioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        callAudioCtx = new AC();
+      }
+      if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+      return callAudioCtx;
+    } catch (e) { return null; }
+  }
+  // Unlock audio on the first interaction so an incoming ringtone can play later.
+  ['pointerdown', 'keydown', 'touchend'].forEach((ev) =>
+    window.addEventListener(ev, ensureAudioCtx, { once: true, passive: true }));
+
+  function chime(ctx, freqs, t0, dur, vol) {
+    const g = ctx.createGain();
+    g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.03);
+    g.gain.setValueAtTime(vol, t0 + Math.max(0.05, dur - 0.06));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    freqs.forEach((f) => {
+      const o = ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = f;
+      o.connect(g); o.start(t0); o.stop(t0 + dur + 0.03);
+    });
+  }
+  function stopRingAudio() {
+    if (ringStop) { try { ringStop(); } catch (e) {} ringStop = null; }
+    clearTimeout(ringAudioTimer); ringAudioTimer = null;
+  }
+  // Outgoing: the classic, gentle dual-tone ringback the caller hears.
+  function startRingback() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    stopRingAudio();
+    let stopped = false;
+    const loop = () => {
+      if (stopped) return;
+      chime(ctx, [440, 480], ctx.currentTime + 0.04, 1.2, 0.06);
+      ringAudioTimer = setTimeout(loop, 3200);
+    };
+    loop();
+    ringStop = () => { stopped = true; };
+  }
+  // Incoming: a pleasant rising chime the callee hears.
+  function startRingtoneAudio() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    stopRingAudio();
+    let stopped = false;
+    const loop = () => {
+      if (stopped) return;
+      const t = ctx.currentTime + 0.04;
+      chime(ctx, [587.33], t, 0.22, 0.10);
+      chime(ctx, [739.99], t + 0.24, 0.22, 0.10);
+      chime(ctx, [880.00], t + 0.48, 0.36, 0.10);
+      ringAudioTimer = setTimeout(loop, 2000);
+    };
+    loop();
+    ringStop = () => { stopped = true; };
+  }
+  // Short confirmation blips when a call connects / ends (professional polish).
+  function playConnectTone() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    chime(ctx, [660], t, 0.12, 0.09);
+    chime(ctx, [880], t + 0.13, 0.18, 0.09);
+  }
+  function playEndTone() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    chime(ctx, [520], t, 0.12, 0.08);
+    chime(ctx, [392], t + 0.13, 0.22, 0.08);
+  }
 
   function callSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
@@ -3186,27 +3272,34 @@
     if (!callSupported()) { toast('⚠️', 'Not supported', 'Calls need a newer browser.'); return; }
     if (activeCall) { toast('📞', 'In a call', 'Finish your current call first.'); return; }
     if (!state.socket || !state.socket.connected) { toast('⚠️', 'Offline', "You're not connected right now."); return; }
+    // Show the call UI + ringback INSTANTLY (don't wait for the camera/mic to
+    // warm up first) so it feels responsive.
+    activeCall = {
+      callId: 'call_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9),
+      peer, media: media === 'video' ? 'video' : 'audio', role: 'caller', status: 'calling',
+      local: null, remote: null, pc: null, offer: null, remoteDescSet: false, pendingIce: [],
+      timer: null, dropTimer: null, noAnswerTimer: null, offlineRing: false,
+      secs: 0, muted: false, camOff: false,
+    };
+    openCallUI();
+    startRingback();
     let local;
     try {
       local = await navigator.mediaDevices.getUserMedia({ audio: true, video: media === 'video' });
     } catch (e) {
       toast('⚠️', 'No access', 'Allow microphone' + (media === 'video' ? ' & camera' : '') + ' to call.');
+      endCallCleanup(); closeCallUI(null);
       return;
     }
-    activeCall = {
-      callId: 'call_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9),
-      peer, media: media === 'video' ? 'video' : 'audio', role: 'caller', status: 'calling',
-      local, remote: null, pc: null, offer: null, remoteDescSet: false, pendingIce: [],
-      timer: null, dropTimer: null, noAnswerTimer: null, offlineRing: false,
-      secs: 0, muted: false, camOff: false,
-    };
-    openCallUI();
+    if (!activeCall) { local.getTracks().forEach((t) => t.stop()); return; } // hung up during the prompt
+    activeCall.local = local;
     attachLocalVideo();
     try {
       const pc = newPeerConnection();
       local.getTracks().forEach((t) => pc.addTrack(t, local));
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      if (!activeCall) return;
       state.socket.emit('call:invite',
         { toUserId: peer.id, callId: activeCall.callId, media: activeCall.media, sdp: { type: offer.type, sdp: offer.sdp } },
         (resp) => {
@@ -3244,6 +3337,8 @@
   async function acceptCall() {
     if (!activeCall || activeCall.role !== 'callee') return;
     stopRinging();
+    activeCall.status = 'connecting';   // update the UI instantly on tap
+    renderCallUI();
     let local;
     try {
       local = await navigator.mediaDevices.getUserMedia({ audio: true, video: activeCall.media === 'video' });
@@ -3252,9 +3347,8 @@
       declineCall();
       return;
     }
+    if (!activeCall) { local.getTracks().forEach((t) => t.stop()); return; }
     activeCall.local = local;
-    activeCall.status = 'connecting';
-    renderCallUI();
     attachLocalVideo();
     try {
       const pc = newPeerConnection();
@@ -3280,6 +3374,7 @@
     if (!activeCall || activeCall.role !== 'caller' || !activeCall.pc) return;
     if (data && data.callId && data.callId !== activeCall.callId) return;
     clearTimeout(activeCall.noAnswerTimer);
+    stopRinging();   // they picked up — stop the ringback
     try {
       await activeCall.pc.setRemoteDescription(data.sdp);
       activeCall.remoteDescSet = true;
@@ -3305,6 +3400,8 @@
   function onCallConnected() {
     if (!activeCall || activeCall.status === 'connected') return;
     clearTimeout(activeCall.noAnswerTimer);
+    stopRinging();   // make sure no ringback/ringtone lingers once connected
+    playConnectTone();
     activeCall.status = 'connected';
     activeCall.secs = 0;
     clearInterval(activeCall.timer);
@@ -3320,6 +3417,7 @@
       const ev = activeCall.status === 'calling' ? 'call:cancel' : 'call:end';
       state.socket.emit(ev, { toUserId: activeCall.peer.id, callId: activeCall.callId });
     }
+    if (activeCall.status === 'connected') playEndTone();  // soft "call ended" blip
     endCallCleanup();
     closeCallUI(reason);
   }
@@ -3427,12 +3525,14 @@
     if (reason) toast('📞', 'Call', reason);
   }
 
-  function startRinging() {
+  function startRinging() {        // callee: incoming ringtone + vibration
+    startRingtoneAudio();
     haptic(60);
-    try { if (navigator.vibrate) ringTimer = setInterval(() => navigator.vibrate([350, 250, 350]), 1300); } catch (e) {}
+    try { if (navigator.vibrate) ringVibTimer = setInterval(() => navigator.vibrate([350, 250, 350]), 1300); } catch (e) {}
   }
-  function stopRinging() {
-    if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+  function stopRinging() {          // stops any ring (incoming OR outgoing) + vibration
+    stopRingAudio();
+    if (ringVibTimer) { clearInterval(ringVibTimer); ringVibTimer = null; }
     try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
   }
 
