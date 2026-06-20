@@ -4251,7 +4251,8 @@
     }
 
     function shareReel(r) {
-      const friends = Array.from(state.friends.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+      const friends = Array.from(state.friends.values())
+        .sort((a, b) => friendName(a).localeCompare(friendName(b)));
       const selected = new Set();
       const overlay = document.createElement('div');
       overlay.className = 'msg-menu';
@@ -4370,6 +4371,26 @@
       feed.querySelectorAll('.reel').forEach((el) => io.observe(el));
     }
 
+    // After the file picker / caption prompt steals focus the current video
+    // pauses and the IntersectionObserver won't re-fire — so play the centred
+    // reel again when we come back. (No-op when reels are closed.)
+    function resumeCurrentReel() {
+      if (!view || view.classList.contains('hidden')) return;
+      if (document.querySelector('.msg-menu')) return; // a sheet (comments/share/compose) is open on top
+      const fr = feed.getBoundingClientRect();
+      const midY = fr.top + fr.height / 2;
+      let best = null, bestDist = Infinity;
+      feed.querySelectorAll('.reel').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const d = Math.abs((r.top + r.height / 2) - midY);
+        if (d < bestDist) { bestDist = d; best = el; }
+      });
+      const v = best && best.querySelector('video');
+      if (v && v.paused) { v.muted = !unmuted; v.play().catch(() => {}); }
+    }
+    window.addEventListener('focus', resumeCurrentReel);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCurrentReel(); });
+
     feed.addEventListener('click', async (e) => {
       const reelEl = e.target.closest('.reel');
       if (!reelEl) return;
@@ -4424,13 +4445,60 @@
       if (feed.scrollTop + feed.clientHeight * 2.5 > feed.scrollHeight) loadReels(false);
     }, { passive: true });
 
-    if (reelInput) reelInput.addEventListener('change', async () => {
+    if (reelInput) reelInput.addEventListener('change', () => {
       const file = reelInput.files && reelInput.files[0];
       reelInput.value = '';
       if (!file) return;
       if (!file.type.startsWith('video/')) { toast('⚠️', 'Video only', 'Pick a video for your reel'); return; }
       if (file.size > 100 * 1024 * 1024) { toast('⚠️', 'Too large', 'Max 100 MB'); return; }
-      const caption = (prompt('Caption (optional):') || '').slice(0, 500);
+      openReelCompose(file);
+    });
+
+    // A proper in-app "New reel" sheet with a preview + caption — replaces the
+    // blocking prompt() (which is disabled inside an installed iOS PWA).
+    function openReelCompose(file) {
+      feed.querySelectorAll('video').forEach((v) => v.pause());
+      const overlay = document.createElement('div');
+      overlay.className = 'msg-menu reel-compose';
+      overlay.innerHTML = `
+        <div class="mm-sheet">
+          <div class="settings-title">New reel</div>
+          <div class="rc-compose">
+            <video class="rc-preview" playsinline muted loop></video>
+            <input id="rc-cap" maxlength="500" placeholder="Add a caption… (optional)">
+          </div>
+          <div class="mm-actions">
+            <button class="mm-act primary" id="rc-post">Post reel</button>
+            <button class="mm-act" data-cancel="1">Cancel</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const prev = overlay.querySelector('.rc-preview');
+      let objUrl = '';
+      try { objUrl = URL.createObjectURL(file); prev.src = objUrl; prev.play().catch(() => {}); } catch (e) {}
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      let posting = false;
+      const close = () => {
+        overlay.classList.remove('show');
+        setTimeout(() => {
+          try { if (objUrl) URL.revokeObjectURL(objUrl); } catch (e) {}
+          overlay.remove();
+          resumeCurrentReel(); // resume the feed only after this sheet is gone
+        }, 200);
+      };
+      overlay.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-cancel]') || e.target === overlay) { if (!posting) close(); return; }
+        if (e.target.closest('#rc-post')) {
+          if (posting) return;
+          posting = true;
+          const caption = (overlay.querySelector('#rc-cap').value || '').slice(0, 500);
+          close();
+          await postReel(file, caption);
+        }
+      });
+    }
+
+    async function postReel(file, caption) {
       toast('📤', 'Posting', 'Uploading your reel…');
       try {
         const up = await uploadBlob(file, 'reel');
@@ -4442,7 +4510,7 @@
         observeReels();
         toast('✅', 'Posted', 'Your reel is live!');
       } catch (e2) { toast('⚠️', 'Failed', e2.message || 'Could not post'); }
-    });
+    }
 
     const reelsBtn = document.getElementById('reels-btn');
     if (reelsBtn) reelsBtn.addEventListener('click', openReels);
