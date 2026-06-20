@@ -1141,6 +1141,7 @@
     return 'sent';
   }
   function tickHtml(m) {
+    if (m.pending) return `<span class="ticks pending">${IC.clock}</span>`;
     const st = tickState(m);
     if (!st) return '';
     return `<span class="ticks ${st}">${st === 'sent' ? IC.tick1 : IC.tick2}</span>`;
@@ -1174,7 +1175,7 @@
     const out = m.senderId === state.me.id;
     const grouped = !!prev && prevD === d && prev.senderId === m.senderId;
     const avatar = avatarHtml(out ? state.me : msgSenderUser(m), { cls: 'm-avatar' });
-    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new" data-mid="${m.id}">${avatar}${renderBubble(m, groupSenderLabel(m, out, grouped))}</div>`;
+    html += `<div class="msg ${out ? 'out' : 'in'} ${grouped ? 'grouped' : 'first'} is-new${m.pending ? ' pending' : ''}" data-mid="${m.id}">${avatar}${renderBubble(m, groupSenderLabel(m, out, grouped))}</div>`;
     // stick to bottom only if it's my message or I'm already near the bottom
     const stick = out || nearBottom(box);
     box.insertAdjacentHTML('beforeend', html);
@@ -1381,6 +1382,45 @@
     }
   }
 
+  // Show my message INSTANTLY (before the server confirms) with a "sending" clock.
+  function optimisticSend(payload, clientId) {
+    if (!state.current) return;
+    const att = payload.attachment;
+    const m = {
+      id: clientId, clientId, senderId: state.me.id,
+      conversationId: state.current.conversationId,
+      body: payload.body || '',
+      attachmentUrl: att ? att.url : null,
+      attachmentType: att ? att.type : null,
+      attachmentName: att ? att.name : null,
+      unsent: false, edited: false,
+      createdAt: new Date().toISOString(),
+      reactions: [],
+      replyTo: state.replyTo ? { id: state.replyTo.id, senderId: state.replyTo.senderId, preview: state.replyTo.preview } : null,
+      pending: true,
+    };
+    state.messages.push(m);
+    appendMessage(m);
+  }
+  // When the server echoes my message back, swap the optimistic bubble for the real
+  // one (real id + tick) instead of adding a duplicate.
+  function reconcileOptimistic(msg) {
+    const cid = msg.clientId;
+    if (!cid || msg.senderId !== state.me.id) return false;
+    const i = state.messages.findIndex((x) => x.clientId === cid);
+    if (i < 0) return false;
+    state.messages[i] = msg;
+    const el = messagesEl.querySelector(`.msg[data-mid="${cid}"]`);
+    if (el) {
+      el.dataset.mid = msg.id;
+      el.classList.remove('pending');
+      const tickEl = el.querySelector('.ticks');
+      if (tickEl) tickEl.outerHTML = tickHtml(msg);
+    }
+    updateSeenRow();
+    return true;
+  }
+
   function sendMessage() {
     if (!state.current) return;
     const body = msgInput.value.trim();
@@ -1396,16 +1436,18 @@
     }
     if (!body && !state.attachment) return;
 
+    const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     const payload = {
       ...sendTarget(),
       body,
       attachment: state.attachment,
       replyToId: state.replyTo ? state.replyTo.id : null,
+      clientId,
     };
     haptic();
+    optimisticSend(payload, clientId); // appears instantly
     if (!state.socket || !state.socket.connected) {
       queueOutbox(payload);
-      toast('📨', 'Queued', "Will send when you're back online");
     } else {
       state.socket.emit('message:send', payload, (resp) => {
         if (resp && resp.error) toast('⚠️', 'Not sent', resp.error);
@@ -1862,8 +1904,10 @@
     if (!isMine) state.socket.emit('message:delivered', { conversationId: convId });
 
     if (isOpen) {
-      state.messages.push(msg);
-      appendMessage(msg);
+      if (!(isMine && reconcileOptimistic(msg))) {
+        state.messages.push(msg);
+        appendMessage(msg);
+      }
       conv.unread = 0;
       if (!isMine) {
         state.socket.emit('message:read', { conversationId: convId });
@@ -1896,8 +1940,10 @@
     }
 
     if (isOpen) {
-      state.messages.push(msg);
-      appendMessage(msg);
+      if (!(isMine && reconcileOptimistic(msg))) {
+        state.messages.push(msg);
+        appendMessage(msg);
+      }
       conv.unread = 0;
       if (!isMine) state.socket.emit('message:read', { conversationId: convId });
     } else if (!isMine) {
@@ -3250,6 +3296,7 @@
     pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>',
     sun: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
     moon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     eye: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
     eyeOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-3 3.9M6.6 6.6A18.6 18.6 0 0 0 2 11s3.5 7 10 7a10.8 10.8 0 0 0 4.4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></svg>',
     success: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>',

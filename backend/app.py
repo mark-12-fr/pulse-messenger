@@ -919,6 +919,10 @@ def on_message_send(payload):
     )
     db.mark_read(conv["id"], uid, msg["id"])
 
+    client_id = str(payload.get("clientId") or "")
+    if client_id:
+        msg["clientId"] = client_id  # echoed so the sender can match its optimistic bubble
+
     is_group = bool(conv.get("is_group"))
     envelope = {"message": msg, "conversationId": conv["id"], "isGroup": is_group, "sender": sender}
     if not is_group:
