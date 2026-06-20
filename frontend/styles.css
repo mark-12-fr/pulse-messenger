@@ -528,6 +528,23 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .file-name { font-weight: 650; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
 .file-sub { font-size: 11.5px; opacity: .85; }
 
+/* polls */
+.bubble.poll { background: var(--elev) !important; color: var(--text) !important; box-shadow: none !important; border: 1px solid var(--line); min-width: 230px; max-width: 280px; }
+.poll-q { font-weight: 750; font-size: 14.5px; margin-bottom: 9px; }
+.poll-opts { display: flex; flex-direction: column; gap: 7px; }
+.poll-opt { position: relative; overflow: hidden; display: flex; align-items: center; gap: 8px; border: 1.5px solid var(--line); background: var(--surface); color: var(--text); border-radius: 11px; padding: 10px 12px; font-size: 13.5px; font-weight: 600; cursor: pointer; text-align: left; }
+.poll-opt.mine { border-color: var(--accent); }
+.poll-bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--active); width: 0; transition: width .35s var(--ease); z-index: 0; }
+.poll-opt.mine .poll-bar { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.poll-opt-label { position: relative; z-index: 1; flex: 1; min-width: 0; }
+.poll-opt-pct { position: relative; z-index: 1; font-size: 12.5px; color: var(--text-soft); font-weight: 700; }
+.poll-total { margin-top: 8px; font-size: 11.5px; color: var(--text-faint); font-weight: 600; }
+.pc-box { background: var(--elev); border: 1px solid var(--line); border-radius: 16px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow); }
+.pc-q, .pc-opt { border: 1.5px solid var(--line); border-radius: 12px; padding: 11px 13px; background: var(--field); color: var(--text); outline: none; font-size: 15px; width: 100%; }
+.pc-q { font-weight: 700; }
+#pc-opts { display: flex; flex-direction: column; gap: 8px; }
+.pc-add { align-self: flex-start; border: none; background: transparent; color: var(--accent); font-weight: 700; font-size: 14px; cursor: pointer; padding: 4px 2px; }
+
 .m-time { font-size: 10.5px; color: var(--text-faint); margin: 1px 6px 6px; align-self: flex-end; }
 .msg.out .m-time { align-self: flex-start; }
 .ticks { display: inline-flex; vertical-align: -3px; margin-left: 3px; color: var(--text-faint); transition: color .2s var(--ease); }

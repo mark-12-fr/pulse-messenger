@@ -1167,6 +1167,65 @@ def on_message_send(payload):
     return {"ok": True, "message": msg}
 
 
+@socketio.on("poll:create")
+def on_poll_create(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    to_user_id = int(payload.get("toUserId") or 0)
+    conv_id = int(payload.get("conversationId") or 0)
+    if conv_id:
+        conv = db.get_conversation_by_id(conv_id)
+        if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, uid):
+            return {"error": "Conversation not found."}
+    else:
+        if not to_user_id:
+            return {"error": "Missing recipient."}
+        fr = db.find_friendship(uid, to_user_id)
+        if not fr or fr["status"] != "accepted":
+            return {"error": "You can only message your friends."}
+        if db.is_blocked_either(uid, to_user_id):
+            return {"error": "You can't message this person."}
+        conv = db.get_or_create_conversation(uid, to_user_id)
+    msg = db.create_poll_message(conv["id"], uid, payload.get("question"), payload.get("options"))
+    if not msg:
+        return {"error": "A poll needs a question and at least 2 options."}
+    db.mark_read(conv["id"], uid, msg["id"])
+    sender = db.get_user_by_id(uid)
+    is_group = bool(conv.get("is_group"))
+    envelope = {"message": msg, "conversationId": conv["id"], "isGroup": is_group, "sender": sender}
+    if not is_group:
+        recipient = db.get_user_by_id(db.conversation_partner_id(conv, uid))
+        envelope["participants"] = {str(uid): sender, str(recipient["id"]): recipient}
+    emit_conv(conv, "message:new", envelope)
+    return {"ok": True, "message": msg}
+
+
+@socketio.on("poll:vote")
+def on_poll_vote(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    message_id = int(payload.get("messageId") or 0)
+    oi = payload.get("optionIndex")
+    if oi is None:
+        return {"error": "Pick an option."}
+    meta = db.get_message_meta(message_id)
+    if not meta:
+        return {"error": "Poll not found."}
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    if not db.is_conversation_member(conv, uid):
+        return {"error": "Not allowed."}
+    res = db.vote_poll(message_id, uid, int(oi))
+    if not res:
+        return {"error": "Cannot vote."}
+    emit_conv(conv, "poll:update",
+              {"messageId": message_id, "conversationId": res["conversationId"], "poll": res["poll"]})
+    return {"ok": True}
+
+
 @socketio.on("typing")
 def on_typing(payload):
     uid = sid_user.get(request.sid)
