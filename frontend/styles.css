@@ -670,7 +670,8 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
   background: var(--scrim);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   display: flex; align-items: center; justify-content: center;
-  z-index: 100;
+  /* above the profile modal (320) & sheets (360) so shared-media taps show */
+  z-index: 380;
   padding: 30px;
   animation: fade .25s var(--ease);
 }
@@ -1233,6 +1234,9 @@ html.resume #auth-screen { display: none; }
 
 /* ===================== Reels (short videos) ===================== */
 .reels-view { position: fixed; inset: 0; z-index: 350; background: #000; }
+/* sheets opened from the reels feed (comments / share) must sit ABOVE the
+   opaque reels overlay, otherwise they're invisible behind it */
+.reels-open .msg-menu { z-index: 360; }
 .reels-feed { height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; }
 .reels-feed::-webkit-scrollbar { display: none; }
 .reel { height: 100%; scroll-snap-align: start; scroll-snap-stop: always; position: relative; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; }
@@ -1339,6 +1343,11 @@ html.resume #auth-screen { display: none; }
 .rc-input { display: flex; gap: 8px; align-items: center; }
 .rc-input input { flex: 1; border: 1.5px solid var(--line); border-radius: 22px; padding: 11px 16px; background: var(--field); color: var(--text); outline: none; font-size: 15px; }
 .rc-input button { width: 44px; min-width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--accent-grad); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+
+/* new-reel compose sheet */
+.rc-compose { background: var(--elev); border: 1px solid var(--line); border-radius: 16px; padding: 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 12px; }
+.rc-preview { width: 100%; max-height: 42vh; border-radius: 12px; background: #000; object-fit: contain; }
+.rc-compose input { border: 1.5px solid var(--line); border-radius: 14px; padding: 11px 14px; background: var(--field); color: var(--text); outline: none; font-size: 15px; }
 
 /* story viewers button */
 .story-viewers { position: absolute; left: 14px; bottom: calc(18px + var(--safe-bottom)); display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,.4); color: #fff; border: none; border-radius: 20px; padding: 8px 14px; font-weight: 650; font-size: 14px; cursor: pointer; z-index: 5; }
