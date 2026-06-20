@@ -163,6 +163,7 @@ def auth_required(fn):
 online = {}        # user_id -> set(sid)
 sid_user = {}      # sid -> user_id
 active_sids = set()  # sids whose app is currently in the foreground
+pending_calls = {}   # callee_uid -> pending call invite (offer + buffered ICE) while they were offline
 
 
 def is_online(uid):
@@ -986,6 +987,8 @@ def on_connect(auth):
     # Now that this user is connected, mark messages waiting for them as
     # delivered and let the senders' ticks turn to ✓✓.
     socketio.start_background_task(_deliver_pending, uid)
+    # If someone tried to call while we were offline, deliver that now.
+    socketio.start_background_task(_deliver_pending_call, uid)
 
 
 def _deliver_pending(uid):
@@ -995,6 +998,22 @@ def _deliver_pending(uid):
             "byUserId": uid,
             "lastDeliveredMessageId": d["lastDeliveredMessageId"],
         })
+
+
+def _deliver_pending_call(uid):
+    pend = pending_calls.pop(uid, None)
+    if not pend:
+        return
+    if time.time() - pend["ts"] > 90:  # the caller has long since given up
+        return
+    socketio.sleep(0.5)  # let the freshly-connected client attach its listeners
+    emit_to_user(uid, "call:incoming", {
+        "callId": pend["callId"], "fromUserId": pend["fromUserId"],
+        "fromUser": db.get_user_by_id(pend["fromUserId"]),
+        "media": pend["media"], "sdp": pend["sdp"],
+    })
+    for cand in pend["ice"]:
+        emit_to_user(uid, "call:ice", {"callId": pend["callId"], "candidate": cand})
 
 
 @socketio.on("disconnect")
@@ -1028,6 +1047,14 @@ def _push_message(recipient_id, title, body, conversation_id):
     """Background task: push to one recipient with deep-link + app-badge data."""
     data = {"conversationId": conversation_id, "badge": db.total_unread(recipient_id)}
     push.send_to_user(recipient_id, title, body, data=data)
+
+
+def _push_call(recipient_id, caller, media):
+    """Background task: ring an offline user's phone so they can come answer."""
+    name = (caller or {}).get("displayName") or "Someone"
+    kind = "video call" if media == "video" else "call"
+    push.send_to_user(recipient_id, name, f"📞 Incoming {kind} — tap to answer",
+                      force=True, data={"type": "call"})
 
 
 @socketio.on("message:send")
@@ -1316,13 +1343,21 @@ def on_call_invite(payload):
     sdp = payload.get("sdp")
     if not _call_peer_ok(uid, to_id) or not call_id or not sdp:
         return {"error": "Can't start this call."}
-    if not is_online(to_id):
-        return {"error": "offline"}
-    emit_to_user(to_id, "call:incoming", {
-        "callId": call_id, "fromUserId": uid,
-        "fromUser": db.get_user_by_id(uid), "media": media, "sdp": sdp,
-    })
-    return {"ok": True}
+    caller = db.get_user_by_id(uid)
+    if is_online(to_id):
+        emit_to_user(to_id, "call:incoming", {
+            "callId": call_id, "fromUserId": uid,
+            "fromUser": caller, "media": media, "sdp": sdp,
+        })
+        return {"ok": True}
+    # Callee is offline: stash the invite and ring their phone with a push so
+    # they can open the app and answer. The handshake completes when they connect.
+    pending_calls[to_id] = {
+        "callId": call_id, "fromUserId": uid, "media": media,
+        "sdp": sdp, "ts": time.time(), "ice": [],
+    }
+    socketio.start_background_task(_push_call, to_id, caller, media)
+    return {"ok": True, "awaitingPeer": True}
 
 
 @socketio.on("call:answer")
@@ -1342,6 +1377,13 @@ def on_call_ice(payload):
     cand = (payload or {}).get("candidate")
     if not uid or not to_id or cand is None:
         return
+    # If the callee hasn't come online yet, buffer our candidates so none are
+    # lost — they're flushed the moment they connect.
+    pend = pending_calls.get(to_id)
+    if pend and pend["callId"] == call_id and not is_online(to_id):
+        if len(pend["ice"]) < 60:
+            pend["ice"].append(cand)
+        return
     emit_to_user(to_id, "call:ice", {"callId": call_id, "candidate": cand})
 
 
@@ -1358,15 +1400,27 @@ def on_call_reject(payload):
 @socketio.on("call:cancel")
 def on_call_cancel(payload):
     uid, to_id, call_id = _call_target(payload)
-    if uid and to_id:
+    if not uid:
+        return
+    _clear_pending_call(to_id, call_id)
+    if to_id:
         emit_to_user(to_id, "call:canceled", {"callId": call_id})
 
 
 @socketio.on("call:end")
 def on_call_end(payload):
     uid, to_id, call_id = _call_target(payload)
-    if uid and to_id:
+    if not uid:
+        return
+    _clear_pending_call(to_id, call_id)
+    if to_id:
         emit_to_user(to_id, "call:ended", {"callId": call_id})
+
+
+def _clear_pending_call(to_id, call_id):
+    pend = pending_calls.get(to_id)
+    if pend and pend.get("callId") == call_id:
+        pending_calls.pop(to_id, None)
 
 
 @socketio.on("call:busy")
