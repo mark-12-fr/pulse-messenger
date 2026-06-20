@@ -2547,6 +2547,55 @@
   const replyCancelBtn = $('#reply-cancel');
   if (replyCancelBtn) replyCancelBtn.addEventListener('click', () => { if (state.editing) cancelEdit(); else cancelReply(); });
 
+  // Swipe a message to the right to reply to it (WhatsApp-style gesture).
+  (function swipeToReply() {
+    const container = document.getElementById('messages');
+    if (!container) return;
+    let el = null, m = null, startX = 0, startY = 0, dx = 0, engaged = false, decided = false;
+    const THRESH = 56;
+    const setX = (x) => {
+      const bw = el && el.querySelector('.bwrap');
+      if (bw) bw.style.transform = x ? `translateX(${x}px)` : '';
+      if (el) el.style.setProperty('--swipe', Math.min(1, x / THRESH).toFixed(2));
+    };
+    const reset = () => {
+      if (el) {
+        const bw = el.querySelector('.bwrap');
+        if (bw) { bw.style.transition = 'transform .18s ease'; bw.style.transform = ''; setTimeout(() => { if (bw) bw.style.transition = ''; }, 200); }
+        el.classList.remove('swiping');
+      }
+      el = null; m = null; engaged = false; decided = false; dx = 0;
+    };
+    container.addEventListener('touchstart', (e) => {
+      if (state.selecting || e.touches.length !== 1) return;
+      const msg = e.target.closest('.msg[data-mid]');
+      if (!msg) return;
+      const found = state.messages.find((x) => x.id === Number(msg.dataset.mid));
+      if (!found || found.unsent) return;
+      el = msg; m = found; engaged = true; decided = false; dx = 0;
+      startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+    }, { passive: true });
+    container.addEventListener('touchmove', (e) => {
+      if (!engaged || !el) return;
+      const mx = e.touches[0].clientX - startX, my = e.touches[0].clientY - startY;
+      if (!decided) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        if (Math.abs(mx) > Math.abs(my) && mx > 0) { decided = true; el.classList.add('swiping'); }
+        else { engaged = false; return; }
+      }
+      dx = Math.max(0, Math.min(mx, 90));
+      setX(dx);
+      if (e.cancelable) e.preventDefault(); // lock out vertical scroll while swiping
+    }, { passive: false });
+    container.addEventListener('touchend', () => {
+      const fire = engaged && decided && dx >= THRESH && m;
+      const msg = m;
+      reset();
+      if (fire) { haptic(); startReply(msg); }
+    });
+    container.addEventListener('touchcancel', reset, { passive: true });
+  })();
+
   function openMsgMenu(msgEl) {
     const mid = Number(msgEl.dataset.mid);
     const m = state.messages.find((x) => x.id === mid);
@@ -2603,9 +2652,8 @@
   function openForward(input) {
     const msgs = (Array.isArray(input) ? input : [input]).filter((m) => m && !m.unsent);
     if (!msgs.length) return;
-    const friends = Array.from(state.friends.values()).sort((a, b) =>
-      a.displayName.localeCompare(b.displayName)
-    );
+    const friends = Array.from(state.friends.values())
+      .sort((a, b) => friendName(a).localeCompare(friendName(b)));
     const selected = new Set();
     const overlay = document.createElement('div');
     overlay.className = 'msg-menu';
