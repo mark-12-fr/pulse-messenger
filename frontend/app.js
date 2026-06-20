@@ -1579,6 +1579,96 @@
 
   // Resize + re-encode photos to JPEG before upload. This shrinks big iPhone
   // photos (lighter storage) AND converts HEIC/HEIF so every device can view it.
+  // Square crop/zoom editor for profile & group photos. Resolves to a cropped
+  // 600x600 JPEG File (exactly what the user framed), or null if cancelled.
+  function openImageCropper(file) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const overlay = document.createElement('div');
+      overlay.className = 'modal cropper-modal';
+      overlay.innerHTML = `
+        <div class="modal-card cropper-card">
+          <h3>Adjust photo</h3>
+          <div class="crop-stage" id="crop-stage"><img id="crop-img" alt="" draggable="false"><div class="crop-ring"></div></div>
+          <div class="crop-hint">Drag to move · pinch or scroll to zoom</div>
+          <div class="modal-actions">
+            <button class="btn-soft" data-cancel="1">Cancel</button>
+            <button class="btn-primary" id="crop-save">Save</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      const stage = overlay.querySelector('#crop-stage');
+      const img = overlay.querySelector('#crop-img');
+      let scale = 1, minScale = 1, tx = 0, ty = 0, B = 0, nW = 0, nH = 0;
+      let dragging = false, sx = 0, sy = 0, stx = 0, sty = 0, pinchD = 0, pinchS = 1;
+
+      const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
+      const clamp = () => {
+        const w = nW * scale, h = nH * scale;
+        if (tx > 0) tx = 0; if (ty > 0) ty = 0;
+        if (tx < B - w) tx = B - w; if (ty < B - h) ty = B - h;
+      };
+      const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+      const zoomAt = (ns, cx, cy) => {
+        ns = Math.max(minScale, Math.min(minScale * 6, ns));
+        const k = ns / scale;
+        tx = cx - (cx - tx) * k; ty = cy - (cy - ty) * k;
+        scale = ns; clamp(); apply();
+      };
+      const onMove = (e) => { if (!dragging) return; tx = stx + (e.clientX - sx); ty = sty + (e.clientY - sy); clamp(); apply(); };
+      const onUp = () => { dragging = false; };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      const cleanup = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        URL.revokeObjectURL(url);
+        overlay.classList.remove('show');
+        setTimeout(() => overlay.remove(), 200);
+      };
+
+      img.onload = () => {
+        B = stage.clientWidth;
+        nW = img.naturalWidth || 1; nH = img.naturalHeight || 1;
+        minScale = Math.max(B / nW, B / nH);
+        scale = minScale;
+        tx = (B - nW * scale) / 2; ty = (B - nH * scale) / 2;
+        apply();
+      };
+      img.src = url;
+
+      stage.addEventListener('mousedown', (e) => { dragging = true; sx = e.clientX; sy = e.clientY; stx = tx; sty = ty; e.preventDefault(); });
+      stage.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(scale * Math.exp(-e.deltaY * 0.0015), B / 2, B / 2); }, { passive: false });
+      stage.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) { dragging = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY; stx = tx; sty = ty; }
+        else if (e.touches.length === 2) { dragging = false; pinchD = dist(e.touches) || 1; pinchS = scale; }
+      }, { passive: true });
+      stage.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1 && dragging) { tx = stx + (e.touches[0].clientX - sx); ty = sty + (e.touches[0].clientY - sy); clamp(); apply(); }
+        else if (e.touches.length === 2) { e.preventDefault(); zoomAt(pinchS * (dist(e.touches) / pinchD), B / 2, B / 2); }
+      }, { passive: false });
+      stage.addEventListener('touchend', () => { dragging = false; });
+
+      overlay.addEventListener('click', (e) => {
+        if (e.target.closest('[data-cancel]') || e.target === overlay) { cleanup(); resolve(null); return; }
+        if (e.target.closest('#crop-save')) {
+          const OUT = 600;
+          const canvas = document.createElement('canvas');
+          canvas.width = OUT; canvas.height = OUT;
+          const srcWH = B / scale;
+          try {
+            canvas.getContext('2d').drawImage(img, (0 - tx) / scale, (0 - ty) / scale, srcWH, srcWH, 0, 0, OUT, OUT);
+            canvas.toBlob((blob) => {
+              cleanup();
+              resolve(blob ? new File([blob], 'avatar.jpg', { type: 'image/jpeg' }) : file);
+            }, 'image/jpeg', 0.9);
+          } catch (err) { cleanup(); resolve(file); }
+        }
+      });
+    });
+  }
+
   function compressImage(file) {
     return new Promise((resolve) => {
       const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i.test(file.name || '');
@@ -2882,9 +2972,10 @@
     input.onchange = async () => {
       const file = input.files && input.files[0];
       if (!file) return;
+      const cropped = await openImageCropper(file);
+      if (!cropped) return;
       try {
-        const img = await compressImage(file);
-        const data = await uploadBlob(img, 'avatar');
+        const data = await uploadBlob(cropped, 'avatar');
         const r = await api('/api/groups/' + cid + '/photo', { method: 'POST', body: { avatarUrl: data.url } });
         applyGroupMeta(cid, r.group);
         toast('✅', 'Updated', 'Group photo changed');
@@ -3188,11 +3279,12 @@
       fileInput.value = '';
       if (!file) return;
       errBox.classList.remove('show');
+      const cropped = await openImageCropper(file);
+      if (!cropped) return;
       wrap.classList.add('uploading');
       saveBtn.disabled = true;
       try {
-        const img = await compressImage(file);
-        const data = await uploadBlob(img, 'avatar');
+        const data = await uploadBlob(cropped, 'avatar');
         avatarUrl = data.url;
         repaint();
       } catch (e2) {

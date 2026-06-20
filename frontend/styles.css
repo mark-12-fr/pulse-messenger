@@ -1297,3 +1297,11 @@ html.resume #auth-screen { display: none; }
 .sc-color.on { border-color: #fff; transform: scale(1.1); }
 .sc-cancel { background: none; border: none; color: #fff; font-weight: 700; font-size: 15px; padding: 8px 12px; cursor: pointer; }
 .sc-post { background: var(--accent-grad); border: none; color: #fff; font-weight: 750; font-size: 15px; padding: 9px 18px; border-radius: 12px; cursor: pointer; }
+
+/* ===================== photo cropper ===================== */
+.cropper-card { width: min(420px, 100%); }
+.crop-stage { position: relative; width: 100%; aspect-ratio: 1 / 1; max-width: 340px; margin: 4px auto 6px; border-radius: 16px; overflow: hidden; background: #000; touch-action: none; cursor: grab; }
+.crop-stage:active { cursor: grabbing; }
+.crop-stage #crop-img { position: absolute; top: 0; left: 0; transform-origin: 0 0; -webkit-user-drag: none; user-select: none; max-width: none; }
+.crop-ring { position: absolute; inset: 0; pointer-events: none; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); border-radius: 50%; }
+.crop-hint { text-align: center; font-size: 12px; color: var(--text-faint); margin-bottom: 14px; }
