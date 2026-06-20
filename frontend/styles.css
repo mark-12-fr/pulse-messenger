@@ -1305,3 +1305,14 @@ html.resume #auth-screen { display: none; }
 .crop-stage #crop-img { position: absolute; top: 0; left: 0; transform-origin: 0 0; -webkit-user-drag: none; user-select: none; max-width: none; }
 .crop-ring { position: absolute; inset: 0; pointer-events: none; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); border-radius: 50%; }
 .crop-hint { text-align: center; font-size: 12px; color: var(--text-faint); margin-bottom: 14px; }
+
+/* status note bubbles (Messenger-style) */
+.status-bar { align-items: flex-end; }
+.st-note { max-width: 74px; font-size: 10px; line-height: 1.25; background: var(--elev); border: 1px solid var(--line); color: var(--text); padding: 4px 7px; border-radius: 11px; border-bottom-left-radius: 3px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: center; box-shadow: var(--shadow-soft); margin-bottom: -3px; position: relative; z-index: 1; word-break: break-word; }
+.st-note-add { color: var(--text-faint); border-style: dashed; }
+
+/* story reactions */
+.story-react { position: absolute; left: 0; right: 0; bottom: calc(18px + var(--safe-bottom)); display: flex; align-items: center; justify-content: center; gap: 9px; z-index: 5; padding: 0 14px; flex-wrap: wrap; }
+.story-react button[data-react] { background: rgba(0,0,0,.25); border: none; width: 46px; height: 46px; border-radius: 50%; font-size: 26px; cursor: pointer; transition: transform .12s var(--ease); display: flex; align-items: center; justify-content: center; }
+.story-react button[data-react]:active { transform: scale(1.35); }
+.story-reply { background: rgba(255,255,255,.16); color: #fff; border: 1.5px solid rgba(255,255,255,.5); border-radius: 22px; padding: 10px 18px; font-weight: 650; font-size: 14px; cursor: pointer; }

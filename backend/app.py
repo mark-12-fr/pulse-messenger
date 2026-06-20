@@ -836,6 +836,25 @@ def remove_status(sid):
     return jsonify(ok=True)
 
 
+@app.post("/api/note")
+@auth_required
+def set_note():
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:60]
+    if not text:
+        db.clear_note(g.user["id"])
+        return jsonify(ok=True, cleared=True)
+    db.set_note(g.user["id"], text)
+    return jsonify(ok=True)
+
+
+@app.delete("/api/note")
+@auth_required
+def clear_note():
+    db.clear_note(g.user["id"])
+    return jsonify(ok=True)
+
+
 @app.errorhandler(413)
 def too_large(_e):
     return jsonify(error="File is too large (max 100 MB)."), 413

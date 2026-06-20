@@ -3813,13 +3813,17 @@
     const feed = state.statusFeed || [];
     const meGroup = feed.find((g) => g.user && g.user.id === state.me.id);
     const others = feed.filter((g) => g.user && g.user.id !== state.me.id);
+    const note = (g) => (g && g.note && g.note.text) ? `<span class="st-note">${escapeHtml(g.note.text)}</span>` : '';
+    const hasStory = (g) => !!(g && g.statuses && g.statuses.length);
     let html = `<button class="st-item" data-st-mine>
-        <span class="st-ring ${meGroup ? (meGroup.hasUnseen ? '' : 'seen') : 'add'}">${avatarHtml(state.me, { cls: 'sm' })}<span class="st-plus">+</span></span>
+        ${note(meGroup) || '<span class="st-note st-note-add">Note</span>'}
+        <span class="st-ring ${hasStory(meGroup) ? (meGroup.hasUnseen ? '' : 'seen') : 'add'}">${avatarHtml(state.me, { cls: 'sm' })}<span class="st-plus">+</span></span>
         <span class="st-name">Your story</span>
       </button>`;
     others.forEach((g) => {
       html += `<button class="st-item" data-st-open="${g.user.id}">
-        <span class="st-ring ${g.hasUnseen ? '' : 'seen'}">${avatarHtml(g.user, { cls: 'sm' })}</span>
+        ${note(g)}
+        <span class="st-ring ${hasStory(g) && g.hasUnseen ? '' : 'seen'}">${avatarHtml(g.user, { cls: 'sm' })}</span>
         <span class="st-name">${escapeHtml(String(g.user.displayName || '').split(/\s+/)[0])}</span>
       </button>`;
     });
@@ -3874,6 +3878,7 @@
     // who + delete
     document.getElementById('story-who').innerHTML = `${avatarHtml(g.user, { cls: 'sm' })}<span class="story-who-txt">${escapeHtml(g.user.displayName || '')} · ${timeAgo(st.createdAt)}</span>`;
     document.getElementById('story-del').classList.toggle('hidden', g.user.id !== state.me.id);
+    document.getElementById('story-react').classList.toggle('hidden', g.user.id === state.me.id);
 
     // mark viewed
     if (g.user.id !== state.me.id && !st.seen) {
@@ -3913,6 +3918,25 @@
         showStorySlide(Math.min(storyState.idx, storyState.group.statuses.length - 1));
       } catch (e) { toast('⚠️', 'Error', e.message); }
     });
+    document.getElementById('story-react').addEventListener('click', (e) => {
+      if (!storyState) return;
+      const ownerId = storyState.group.user.id;
+      const r = e.target.closest('[data-react]');
+      if (r) {
+        if (state.socket) state.socket.emit('message:send', {
+          toUserId: ownerId,
+          body: 'Reacted ' + r.dataset.react + ' to your story',
+          clientId: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        }, (resp) => { if (resp && resp.error) toast('⚠️', 'Not sent', resp.error); });
+        haptic();
+        toast('💌', 'Sent', 'Reacted ' + r.dataset.react);
+        return;
+      }
+      if (e.target.closest('#story-reply')) {
+        closeStory();
+        openConversationByPeer(ownerId);
+      }
+    });
   }
 
   // status bar interactions
@@ -3925,7 +3949,9 @@
       if (open) {
         const uid = Number(open.dataset.stOpen);
         const g = (state.statusFeed || []).find((x) => x.user && x.user.id === uid);
-        if (g) openStory(g);
+        if (!g) return;
+        if (g.statuses && g.statuses.length) openStory(g);
+        else if (g.note) openConversationByPeer(uid); // note-only → open chat to reply
       }
     });
   })();
@@ -3939,7 +3965,8 @@
         <div class="mm-actions">
           <button class="mm-act" data-add="media">Photo / Video</button>
           <button class="mm-act" data-add="text">Text status</button>
-          ${myGroup ? `<button class="mm-act" data-add="view">View my story</button>` : ''}
+          <button class="mm-act" data-add="note">${myGroup && myGroup.note ? 'Edit note' : 'Add a note'}</button>
+          ${myGroup && myGroup.statuses && myGroup.statuses.length ? `<button class="mm-act" data-add="view">View my story</button>` : ''}
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
       </div>`;
@@ -3952,10 +3979,47 @@
         close();
         if (a.dataset.add === 'media') statusInput && statusInput.click();
         else if (a.dataset.add === 'text') openTextStatusComposer();
+        else if (a.dataset.add === 'note') openNoteComposer();
         else if (a.dataset.add === 'view' && myGroup) openStory(myGroup);
         return;
       }
       if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  function openNoteComposer() {
+    const myGroup = (state.statusFeed || []).find((g) => g.user && g.user.id === state.me.id);
+    const cur = myGroup && myGroup.note ? myGroup.note.text : '';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>Share a note</h3>
+        <p class="confirm-text" style="margin-bottom:12px">A short note shown by your avatar for 24 hours.</p>
+        <div class="field"><input id="note-text" maxlength="60" placeholder="What's on your mind?" value="${escapeHtml(cur)}"></div>
+        <div class="modal-actions">
+          ${cur ? `<button class="btn-soft" id="note-clear">Clear</button>` : `<button class="btn-soft" data-cancel="1">Cancel</button>`}
+          <button class="btn-primary" id="note-save">Share</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    setTimeout(() => { const i = overlay.querySelector('#note-text'); if (i) i.focus(); }, 100);
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', async (e) => {
+      if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('#note-clear')) {
+        try { await api('/api/note', { method: 'DELETE' }); close(); await loadStatusFeed(); toast('✅', 'Cleared', 'Note removed'); } catch (e2) { toast('⚠️', 'Error', e2.message); }
+        return;
+      }
+      if (e.target.closest('#note-save')) {
+        const text = overlay.querySelector('#note-text').value.trim();
+        try {
+          await api('/api/note', { method: 'POST', body: { text } });
+          close(); await loadStatusFeed();
+          toast('✅', text ? 'Shared' : 'Cleared', text ? 'Note shared for 24h' : 'Note removed');
+        } catch (e2) { toast('⚠️', 'Error', e2.message); }
+      }
     });
   }
 

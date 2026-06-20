@@ -33,7 +33,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260616m" />
+  <link rel="stylesheet" href="/styles.css?v=20260616n" />
 </head>
 <body>
 
@@ -225,6 +225,15 @@
     <div class="story-stage" id="story-stage"></div>
     <button class="story-nav story-prev" id="story-prev" aria-label="Previous"></button>
     <button class="story-nav story-next" id="story-next" aria-label="Next"></button>
+    <div class="story-react hidden" id="story-react">
+      <button data-react="❤️">❤️</button>
+      <button data-react="😂">😂</button>
+      <button data-react="😮">😮</button>
+      <button data-react="😢">😢</button>
+      <button data-react="👏">👏</button>
+      <button data-react="🔥">🔥</button>
+      <button class="story-reply" id="story-reply">Reply…</button>
+    </div>
   </div>
   <input type="file" id="status-input" hidden accept="image/*,video/*" />
 
@@ -258,6 +267,6 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <script src="/config.js"></script>
-  <script src="/app.js?v=20260616m"></script>
+  <script src="/app.js?v=20260616n"></script>
 </body>
 </html>

@@ -229,6 +229,13 @@ class StatusView(Base):
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class Note(Base):
+    __tablename__ = "notes"
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    text = mapped_column(Text, nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     try:
@@ -1339,25 +1346,37 @@ def status_feed(me_id):
             select(Status).where(Status.user_id.in_(user_ids), Status.created_at >= cutoff)
             .order_by(Status.created_at.asc())
         ).scalars().all()
-        if not rows:
+        notes = {
+            n.user_id: n
+            for n in s.execute(select(Note).where(Note.user_id.in_(user_ids), Note.created_at >= cutoff)).scalars().all()
+        }
+        active_uids = set(notes.keys()) | {r.user_id for r in rows}
+        if not active_uids:
             return []
         sid_list = [r.id for r in rows]
         my_views = set(s.execute(
             select(StatusView.status_id).where(StatusView.status_id.in_(sid_list), StatusView.user_id == me_id)
-        ).scalars().all())
+        ).scalars().all()) if sid_list else set()
         authors = {
             u.id: public_user(u)
-            for u in s.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+            for u in s.execute(select(User).where(User.id.in_(active_uids))).scalars().all()
         }
         groups = {}
         for r in rows:
-            g = groups.setdefault(r.user_id, {"user": authors.get(r.user_id), "statuses": [], "hasUnseen": False, "_latest": ""})
+            g = groups.setdefault(r.user_id, {"user": authors.get(r.user_id), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
             ps = public_status(r)
             ps["seen"] = r.id in my_views
             g["statuses"].append(ps)
             g["_latest"] = ps["createdAt"] or g["_latest"]
             if not ps["seen"] and r.user_id != me_id:
                 g["hasUnseen"] = True
+        for uid in active_uids:
+            g = groups.setdefault(uid, {"user": authors.get(uid), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
+            n = notes.get(uid)
+            if n:
+                g["note"] = {"text": n.text, "createdAt": _iso(n.created_at)}
+                if not g["_latest"]:
+                    g["_latest"] = _iso(n.created_at)
         result = [g for g in groups.values() if g["user"]]
         # stable sorts (apply least-significant first): most-recent, then unseen, then me
         result.sort(key=lambda g: g["_latest"], reverse=True)
@@ -1380,6 +1399,24 @@ def delete_status(status_id, user_id):
             return False
         s.delete(st)
         return True
+
+
+def set_note(user_id, text):
+    """Set (or replace) the user's 24h note."""
+    with session_scope() as s:
+        n = s.get(Note, user_id)
+        if n:
+            n.text = text
+            n.created_at = now_utc()
+        else:
+            s.add(Note(user_id=user_id, text=text, created_at=now_utc()))
+
+
+def clear_note(user_id):
+    with session_scope() as s:
+        n = s.get(Note, user_id)
+        if n:
+            s.delete(n)
 
 
 # ---------------------------------------------------------------------------
