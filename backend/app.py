@@ -778,7 +778,8 @@ def create_reel():
 @auth_required
 def get_reels():
     before = request.args.get("before", type=int)
-    reels = db.list_reels(g.user["id"], before_id=before, limit=10)
+    following = request.args.get("following") in ("1", "true")
+    reels = db.list_reels(g.user["id"], before_id=before, limit=10, following_only=following)
     return jsonify(reels=reels, hasMore=len(reels) == 10)
 
 
@@ -786,6 +787,46 @@ def get_reels():
 @auth_required
 def like_reel(rid):
     return jsonify(db.toggle_reel_like(rid, g.user["id"]))
+
+
+@app.post("/api/reels/<int:rid>/view")
+@auth_required
+def view_reel(rid):
+    return jsonify(views=db.increment_reel_views(rid))
+
+
+@app.get("/api/reels/<int:rid>/comments")
+@auth_required
+def get_reel_comments(rid):
+    return jsonify(comments=db.list_reel_comments(rid))
+
+
+@app.post("/api/reels/<int:rid>/comments")
+@auth_required
+def add_reel_comment(rid):
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:500]
+    if not text:
+        return jsonify(error="Empty comment."), 400
+    c = db.add_reel_comment(rid, g.user["id"], text)
+    if not c:
+        return jsonify(error="Reel not found."), 404
+    return jsonify(comment=c)
+
+
+@app.delete("/api/reels/comments/<int:cid>")
+@auth_required
+def remove_reel_comment(cid):
+    ok = db.delete_reel_comment(cid, g.user["id"])
+    if not ok:
+        return jsonify(error="Not found."), 404
+    return jsonify(ok=True)
+
+
+@app.post("/api/users/<int:uid>/follow")
+@auth_required
+def follow_user(uid):
+    return jsonify(db.toggle_follow(g.user["id"], uid))
 
 
 @app.delete("/api/reels/<int:rid>")
@@ -834,6 +875,15 @@ def remove_status(sid):
     if not ok:
         return jsonify(error="Not found."), 404
     return jsonify(ok=True)
+
+
+@app.get("/api/status/<int:sid>/viewers")
+@auth_required
+def status_viewers(sid):
+    viewers = db.list_status_viewers(sid, g.user["id"])
+    if viewers is None:
+        return jsonify(error="Not found."), 404
+    return jsonify(viewers=viewers)
 
 
 @app.post("/api/note")

@@ -3409,6 +3409,8 @@
     share: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5 8.6 10.5"/></svg>',
     pin: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 3h6l-1 7 3 2.5V14H7v-1.5L10 10 9 3Z"/></svg>',
     heart: '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.3 2 4.5 5.6 4.5c2 0 3.4 1.1 4.4 2.5 1-1.4 2.4-2.5 4.4-2.5 3.6 0 5.2 3.8 3.6 7.2C19.5 16.4 12 21 12 21Z"/></svg>',
+    comment: '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.9-.9L3 20l1.1-4A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5Z"/></svg>',
+    shareArrow: '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/></svg>',
     trash: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
     muted: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m23 9-6 6M17 9l6 6"/></svg>',
   };
@@ -3652,6 +3654,97 @@
     let loading = false;
     let unmuted = false;
     let io = null;
+    let feedMode = 'foryou';
+    const viewed = new Set();
+
+    function openReelComments(reelId, reelEl) {
+      const overlay = document.createElement('div');
+      overlay.className = 'msg-menu reel-comments';
+      overlay.innerHTML = `
+        <div class="mm-sheet rc-sheet">
+          <div class="settings-title">Comments</div>
+          <div class="rc-list" id="rc-list"><div class="empty-note">Loading…</div></div>
+          <div class="rc-input"><input id="rc-text" maxlength="500" placeholder="Add a comment…"><button id="rc-send">${IC.send}</button></div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+      const list = overlay.querySelector('#rc-list');
+      const draw = (comments) => {
+        if (!comments.length) { list.innerHTML = '<div class="empty-note">No comments yet. Be the first! 💬</div>'; return; }
+        list.innerHTML = comments.map((c) => `
+          <div class="rc-item" data-cid="${c.id}">
+            ${avatarHtml(c.author || { displayName: '?' }, { cls: 'sm' })}
+            <div class="rc-body"><div class="rc-name">${escapeHtml((c.author && c.author.displayName) || 'Someone')}</div><div class="rc-text">${escapeHtml(c.text)}</div></div>
+            ${c.author && state.me && c.author.id === state.me.id ? `<button class="rc-del" data-rcdel="${c.id}" aria-label="Delete">✕</button>` : ''}
+          </div>`).join('');
+      };
+      api('/api/reels/' + reelId + '/comments').then((d) => draw(d.comments || [])).catch(() => { list.innerHTML = '<div class="empty-note">Could not load.</div>'; });
+      const send = async () => {
+        const inp = overlay.querySelector('#rc-text');
+        const text = inp.value.trim();
+        if (!text) return;
+        inp.value = '';
+        try {
+          await api('/api/reels/' + reelId + '/comments', { method: 'POST', body: { text } });
+          const d = await api('/api/reels/' + reelId + '/comments');
+          draw(d.comments || []);
+          list.scrollTop = list.scrollHeight;
+          const n = reelEl && reelEl.querySelector('.reel-cmt-n');
+          if (n) n.textContent = (d.comments || []).length;
+          const rr = reels.find((x) => x.id === reelId); if (rr) rr.commentCount = (d.comments || []).length;
+        } catch (e) { toast('⚠️', 'Error', e.message); }
+      };
+      overlay.querySelector('#rc-send').addEventListener('click', send);
+      overlay.querySelector('#rc-text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+      overlay.addEventListener('click', async (e) => {
+        const del = e.target.closest('[data-rcdel]');
+        if (del) {
+          try { await api('/api/reels/comments/' + del.dataset.rcdel, { method: 'DELETE' }); del.closest('.rc-item').remove(); } catch (_) {}
+          return;
+        }
+        if (e.target === overlay) close();
+      });
+    }
+
+    function shareReel(r) {
+      const friends = Array.from(state.friends.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+      const selected = new Set();
+      const overlay = document.createElement('div');
+      overlay.className = 'msg-menu';
+      overlay.innerHTML = `
+        <div class="mm-sheet fwd-sheet">
+          <div class="settings-title">Share reel to…</div>
+          ${friends.length ? '' : '<div class="empty-note">No friends to share with.</div>'}
+          <div class="fwd-list">
+            ${friends.map((f) => `<button class="fwd-row" data-fid="${f.id}">${avatarHtml(f)}<span class="fwd-name">${escapeHtml(friendName(f))}</span><span class="fwd-check">${IC.check}</span></button>`).join('')}
+          </div>
+          <div class="mm-actions"><button class="mm-act primary" id="sr-send" disabled>Send</button><button class="mm-act" data-cancel="1">Cancel</button></div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+      const sendBtn = overlay.querySelector('#sr-send');
+      overlay.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-fid]');
+        if (row) {
+          const id = Number(row.dataset.fid);
+          if (selected.has(id)) { selected.delete(id); row.classList.remove('sel'); } else { selected.add(id); row.classList.add('sel'); }
+          sendBtn.disabled = selected.size === 0;
+          return;
+        }
+        if (e.target.closest('#sr-send')) {
+          if (!selected.size || !state.socket) return;
+          selected.forEach((toUserId) => {
+            state.socket.emit('message:send', { toUserId, body: '', attachment: { url: r.videoUrl, type: 'video', name: 'reel.mp4' }, replyToId: null });
+          });
+          close();
+          toast('↪️', 'Shared', selected.size > 1 ? `Sent to ${selected.size} chats` : 'Reel shared');
+          return;
+        }
+        if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+      });
+    }
 
     function openReels() {
       view.classList.remove('hidden');
@@ -3670,8 +3763,10 @@
       if (loading || (!hasMore && !first)) return;
       loading = true;
       try {
-        const q = (!first && reels.length) ? '?before=' + reels[reels.length - 1].id : '';
-        const data = await api('/api/reels' + q);
+        const params = [];
+        if (feedMode === 'following') params.push('following=1');
+        if (!first && reels.length) params.push('before=' + reels[reels.length - 1].id);
+        const data = await api('/api/reels' + (params.length ? '?' + params.join('&') : ''));
         hasMore = !!data.hasMore;
         const fresh = data.reels || [];
         if (first) { reels = fresh; feed.innerHTML = ''; }
@@ -3690,16 +3785,20 @@
       el.className = 'reel';
       el.dataset.id = r.id;
       const mine = state.me && r.author && r.author.id === state.me.id;
+      if (r.author) el.dataset.uid = r.author.id;
       el.innerHTML =
         `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline muted preload="metadata"></video>
         <div class="reel-mute">${IC.muted}</div>
         <div class="reel-side">
-          <button class="reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
-          ${mine ? `<button class="reel-del" data-del aria-label="Delete">${IC.trash}</button>` : ''}
+          <button class="reel-act reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
+          <button class="reel-act" data-comment aria-label="Comments">${IC.comment}<span class="reel-cmt-n">${r.commentCount || 0}</span></button>
+          <button class="reel-act" data-share aria-label="Share">${IC.shareArrow}</button>
+          ${mine ? `<button class="reel-act reel-del" data-del aria-label="Delete">${IC.trash}</button>` : ''}
         </div>
         <div class="reel-meta">
-          <div class="reel-author">${avatarHtml(r.author || { displayName: '?' }, { cls: 'sm' })}<span class="reel-author-name">${escapeHtml((r.author && r.author.displayName) || 'Someone')}</span></div>
+          <div class="reel-author">${avatarHtml(r.author || { displayName: '?' }, { cls: 'sm' })}<span class="reel-author-name">${escapeHtml((r.author && r.author.displayName) || 'Someone')}</span>${mine ? '' : `<button class="reel-follow ${r.followed ? 'on' : ''}" data-follow>${r.followed ? 'Following' : 'Follow'}</button>`}</div>
           ${r.caption ? `<div class="reel-caption">${escapeHtml(r.caption)}</div>` : ''}
+          <div class="reel-views"><span class="reel-views-n">${r.views || 0}</span> views</div>
         </div>`;
       return el;
     }
@@ -3714,6 +3813,14 @@
           if (e.isIntersecting && e.intersectionRatio >= 0.6) {
             v.muted = !unmuted;
             v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+            const id = Number(e.target.dataset.id);
+            if (id && !viewed.has(id)) {
+              viewed.add(id);
+              api('/api/reels/' + id + '/view', { method: 'POST' }).then((res) => {
+                const n = e.target.querySelector('.reel-views-n');
+                if (n && res && typeof res.views === 'number') n.textContent = res.views;
+              }).catch(() => {});
+            }
           } else { v.pause(); }
         });
       }, { root: feed, threshold: [0, 0.6, 1] });
@@ -3730,6 +3837,25 @@
           const r = await api('/api/reels/' + id + '/like', { method: 'POST' });
           likeBtn.classList.toggle('on', r.liked);
           likeBtn.querySelector('.reel-like-n').textContent = r.likeCount;
+          haptic();
+        } catch (_) {}
+        return;
+      }
+      if (e.target.closest('[data-comment]')) { openReelComments(id, reelEl); return; }
+      if (e.target.closest('[data-share]')) {
+        const r = reels.find((x) => x.id === id);
+        if (r) shareReel(r);
+        return;
+      }
+      const followBtn = e.target.closest('[data-follow]');
+      if (followBtn) {
+        const uid = Number(reelEl.dataset.uid);
+        try {
+          const res = await api('/api/users/' + uid + '/follow', { method: 'POST' });
+          feed.querySelectorAll(`.reel[data-uid="${uid}"] [data-follow]`).forEach((b) => {
+            b.classList.toggle('on', res.following); b.textContent = res.following ? 'Following' : 'Follow';
+          });
+          reels.forEach((x) => { if (x.author && x.author.id === uid) x.followed = res.following; });
           haptic();
         } catch (_) {}
         return;
@@ -3781,6 +3907,14 @@
     if (closeBtn) closeBtn.addEventListener('click', closeReels);
     const addBtn = document.getElementById('reels-add');
     if (addBtn) addBtn.addEventListener('click', () => reelInput && reelInput.click());
+    document.querySelectorAll('.reels-tab').forEach((t) => t.addEventListener('click', () => {
+      const mode = t.dataset.feed;
+      if (mode === feedMode) return;
+      feedMode = mode;
+      document.querySelectorAll('.reels-tab').forEach((x) => x.classList.toggle('on', x === t));
+      reels = []; hasMore = true;
+      loadReels(true);
+    }));
   })();
 
   // ============================================================
@@ -3877,8 +4011,20 @@
 
     // who + delete
     document.getElementById('story-who').innerHTML = `${avatarHtml(g.user, { cls: 'sm' })}<span class="story-who-txt">${escapeHtml(g.user.displayName || '')} · ${timeAgo(st.createdAt)}</span>`;
-    document.getElementById('story-del').classList.toggle('hidden', g.user.id !== state.me.id);
-    document.getElementById('story-react').classList.toggle('hidden', g.user.id === state.me.id);
+    const isMine = g.user.id === state.me.id;
+    document.getElementById('story-del').classList.toggle('hidden', !isMine);
+    document.getElementById('story-react').classList.toggle('hidden', isMine);
+    const viewersBtn = document.getElementById('story-viewers');
+    viewersBtn.classList.toggle('hidden', !isMine);
+    if (isMine) {
+      storyState.viewers = [];
+      document.getElementById('story-viewers-n').textContent = '0';
+      api('/api/status/' + st.id + '/viewers').then((d) => {
+        if (!storyState || storyState.group.statuses[storyState.idx] !== st) return;
+        storyState.viewers = d.viewers || [];
+        document.getElementById('story-viewers-n').textContent = storyState.viewers.length;
+      }).catch(() => {});
+    }
 
     // mark viewed
     if (g.user.id !== state.me.id && !st.seen) {
@@ -3917,6 +4063,23 @@
         if (!storyState.group.statuses.length) return closeStory();
         showStorySlide(Math.min(storyState.idx, storyState.group.statuses.length - 1));
       } catch (e) { toast('⚠️', 'Error', e.message); }
+    });
+    document.getElementById('story-viewers').addEventListener('click', () => {
+      const viewers = (storyState && storyState.viewers) || [];
+      const sheet = document.createElement('div');
+      sheet.className = 'msg-menu';
+      sheet.innerHTML = `
+        <div class="mm-sheet">
+          <div class="settings-title">Viewed by ${viewers.length}</div>
+          <div class="fwd-list">
+            ${viewers.length ? viewers.map((u) => `<div class="fwd-row">${avatarHtml(u)}<span class="fwd-name">${escapeHtml(u.displayName || '')}</span></div>`).join('') : '<div class="empty-note">No views yet.</div>'}
+          </div>
+          <div class="mm-actions"><button class="mm-act" data-cancel="1">Close</button></div>
+        </div>`;
+      document.body.appendChild(sheet);
+      requestAnimationFrame(() => sheet.classList.add('show'));
+      const closeSheet = () => { sheet.classList.remove('show'); setTimeout(() => sheet.remove(), 200); };
+      sheet.addEventListener('click', (e) => { if (e.target.closest('[data-cancel]') || e.target === sheet) closeSheet(); });
     });
     document.getElementById('story-react').addEventListener('click', (e) => {
       if (!storyState) return;

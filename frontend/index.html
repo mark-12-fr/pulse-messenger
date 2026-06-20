@@ -33,7 +33,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260616n" />
+  <link rel="stylesheet" href="/styles.css?v=20260616o" />
 </head>
 <body>
 
@@ -234,6 +234,10 @@
       <button data-react="🔥">🔥</button>
       <button class="story-reply" id="story-reply">Reply…</button>
     </div>
+    <button class="story-viewers hidden" id="story-viewers" aria-label="Viewers">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span id="story-viewers-n">0</span>
+    </button>
   </div>
   <input type="file" id="status-input" hidden accept="image/*,video/*" />
 
@@ -244,7 +248,10 @@
       <button class="reels-close" id="reels-close" aria-label="Close">
         <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>
       </button>
-      <span class="reels-title">Reels</span>
+      <div class="reels-tabs">
+        <button class="reels-tab on" data-feed="foryou">For You</button>
+        <button class="reels-tab" data-feed="following">Following</button>
+      </div>
       <button class="reels-add" id="reels-add" aria-label="New reel">
         <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -267,6 +274,6 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <script src="/config.js"></script>
-  <script src="/app.js?v=20260616n"></script>
+  <script src="/app.js?v=20260616o"></script>
 </body>
 </html>
