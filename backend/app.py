@@ -620,6 +620,17 @@ def conversation_messages(cid):
     )
 
 
+@app.get("/api/conversations/<int:cid>/media")
+@auth_required
+def conversation_media(cid):
+    """Photos & videos shared in a chat — powers the profile 'shared media' grid."""
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Conversation not found."), 404
+    return jsonify(media=db.list_conversation_media(cid, limit=60))
+
+
 # ---------------------------------------------------------------------------
 # Group chats
 # ---------------------------------------------------------------------------
@@ -778,7 +789,8 @@ def create_reel():
 @auth_required
 def get_reels():
     before = request.args.get("before", type=int)
-    reels = db.list_reels(g.user["id"], before_id=before, limit=10)
+    following = request.args.get("following") in ("1", "true")
+    reels = db.list_reels(g.user["id"], before_id=before, limit=10, following_only=following)
     return jsonify(reels=reels, hasMore=len(reels) == 10)
 
 
@@ -786,6 +798,46 @@ def get_reels():
 @auth_required
 def like_reel(rid):
     return jsonify(db.toggle_reel_like(rid, g.user["id"]))
+
+
+@app.post("/api/reels/<int:rid>/view")
+@auth_required
+def view_reel(rid):
+    return jsonify(views=db.increment_reel_views(rid))
+
+
+@app.get("/api/reels/<int:rid>/comments")
+@auth_required
+def get_reel_comments(rid):
+    return jsonify(comments=db.list_reel_comments(rid))
+
+
+@app.post("/api/reels/<int:rid>/comments")
+@auth_required
+def add_reel_comment(rid):
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:500]
+    if not text:
+        return jsonify(error="Empty comment."), 400
+    c = db.add_reel_comment(rid, g.user["id"], text)
+    if not c:
+        return jsonify(error="Reel not found."), 404
+    return jsonify(comment=c)
+
+
+@app.delete("/api/reels/comments/<int:cid>")
+@auth_required
+def remove_reel_comment(cid):
+    ok = db.delete_reel_comment(cid, g.user["id"])
+    if not ok:
+        return jsonify(error="Not found."), 404
+    return jsonify(ok=True)
+
+
+@app.post("/api/users/<int:uid>/follow")
+@auth_required
+def follow_user(uid):
+    return jsonify(db.toggle_follow(g.user["id"], uid))
 
 
 @app.delete("/api/reels/<int:rid>")
@@ -834,6 +886,15 @@ def remove_status(sid):
     if not ok:
         return jsonify(error="Not found."), 404
     return jsonify(ok=True)
+
+
+@app.get("/api/status/<int:sid>/viewers")
+@auth_required
+def status_viewers(sid):
+    viewers = db.list_status_viewers(sid, g.user["id"])
+    if viewers is None:
+        return jsonify(error="Not found."), 404
+    return jsonify(viewers=viewers)
 
 
 @app.post("/api/note")
@@ -1220,6 +1281,99 @@ def on_conversation_delete(payload):
     data = {"conversationId": cid}
     emit_conv(conv, "conversation:cleared", data)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Voice & video calls (WebRTC signaling relay — peer-to-peer, 1-to-1)
+# The server only relays SDP offers/answers and ICE candidates between two
+# friends; the actual audio/video never touches the server.
+# ---------------------------------------------------------------------------
+def _call_peer_ok(uid, other_id):
+    if not uid or not other_id or other_id == uid:
+        return False
+    fr = db.find_friendship(uid, other_id)
+    if not fr or fr.get("status") != "accepted":
+        return False
+    return not db.is_blocked_either(uid, other_id)
+
+
+def _call_target(payload):
+    """Common (caller_uid, to_id, call_id) extraction for signaling events."""
+    uid = sid_user.get(request.sid)
+    payload = payload or {}
+    to_id = int(payload.get("toUserId") or 0)
+    call_id = str(payload.get("callId") or "")[:64]
+    return uid, to_id, call_id
+
+
+@socketio.on("call:invite")
+def on_call_invite(payload):
+    uid, to_id, call_id = _call_target(payload)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    media = "video" if payload.get("media") == "video" else "audio"
+    sdp = payload.get("sdp")
+    if not _call_peer_ok(uid, to_id) or not call_id or not sdp:
+        return {"error": "Can't start this call."}
+    if not is_online(to_id):
+        return {"error": "offline"}
+    emit_to_user(to_id, "call:incoming", {
+        "callId": call_id, "fromUserId": uid,
+        "fromUser": db.get_user_by_id(uid), "media": media, "sdp": sdp,
+    })
+    return {"ok": True}
+
+
+@socketio.on("call:answer")
+def on_call_answer(payload):
+    uid, to_id, call_id = _call_target(payload)
+    sdp = (payload or {}).get("sdp")
+    if not uid or not _call_peer_ok(uid, to_id) or not sdp:
+        return
+    emit_to_user(to_id, "call:answered", {"callId": call_id, "sdp": sdp})
+    # stop the call ringing on my other devices
+    socketio.emit("call:dismiss", {"callId": call_id}, room=f"user:{uid}", skip_sid=request.sid)
+
+
+@socketio.on("call:ice")
+def on_call_ice(payload):
+    uid, to_id, call_id = _call_target(payload)
+    cand = (payload or {}).get("candidate")
+    if not uid or not to_id or cand is None:
+        return
+    emit_to_user(to_id, "call:ice", {"callId": call_id, "candidate": cand})
+
+
+@socketio.on("call:reject")
+def on_call_reject(payload):
+    uid, to_id, call_id = _call_target(payload)
+    if not uid:
+        return
+    if to_id:
+        emit_to_user(to_id, "call:rejected", {"callId": call_id})
+    socketio.emit("call:dismiss", {"callId": call_id}, room=f"user:{uid}", skip_sid=request.sid)
+
+
+@socketio.on("call:cancel")
+def on_call_cancel(payload):
+    uid, to_id, call_id = _call_target(payload)
+    if uid and to_id:
+        emit_to_user(to_id, "call:canceled", {"callId": call_id})
+
+
+@socketio.on("call:end")
+def on_call_end(payload):
+    uid, to_id, call_id = _call_target(payload)
+    if uid and to_id:
+        emit_to_user(to_id, "call:ended", {"callId": call_id})
+
+
+@socketio.on("call:busy")
+def on_call_busy(payload):
+    uid, to_id, call_id = _call_target(payload)
+    if uid and to_id:
+        emit_to_user(to_id, "call:busy", {"callId": call_id})
 
 
 # ---------------------------------------------------------------------------
