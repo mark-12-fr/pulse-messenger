@@ -33,7 +33,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260616k" />
+  <link rel="stylesheet" href="/styles.css?v=20260616l" />
 </head>
 <body>
 
@@ -126,6 +126,7 @@
       </nav>
 
       <div class="list-scroll">
+        <div id="status-bar" class="status-bar hidden"></div>
         <div id="search-results" class="panel hidden"></div>
         <div id="tab-chats" class="panel"></div>
         <div id="tab-friends" class="panel hidden"></div>
@@ -209,6 +210,24 @@
     </main>
   </div>
 
+  <!-- Status / Story viewer -->
+  <div id="story-view" class="story-view hidden">
+    <div class="story-bars" id="story-bars"></div>
+    <div class="story-top">
+      <div class="story-who" id="story-who"></div>
+      <div class="story-top-actions">
+        <button class="story-del hidden" id="story-del" aria-label="Delete">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>
+        </button>
+        <button class="story-close" id="story-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="story-stage" id="story-stage"></div>
+    <button class="story-nav story-prev" id="story-prev" aria-label="Previous"></button>
+    <button class="story-nav story-next" id="story-next" aria-label="Next"></button>
+  </div>
+  <input type="file" id="status-input" hidden accept="image/*,video/*" />
+
   <!-- Reels (short videos) -->
   <div id="reels-view" class="reels-view hidden">
     <div class="reels-feed" id="reels-feed"></div>
@@ -239,6 +258,6 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <script src="/config.js"></script>
-  <script src="/app.js?v=20260616k"></script>
+  <script src="/app.js?v=20260616l"></script>
 </body>
 </html>

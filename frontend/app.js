@@ -415,8 +415,9 @@
     showChatsSkeleton();
 
     connectSocket();
-    await Promise.all([loadFriends(), loadConversations(), loadRequests()]);
+    await Promise.all([loadFriends(), loadConversations(), loadRequests(), loadStatusFeed()]);
     renderAll();
+    showActivePanel();
     conversationsReady = true;
     if (pendingOpenConv) { openConversationById(pendingOpenConv); pendingOpenConv = null; }
     if (pendingAdd) {
@@ -701,6 +702,8 @@
     ['chats', 'friends', 'requests'].forEach((name) =>
       $('#tab-' + name).classList.toggle('hidden', searching || name !== state.activeTab)
     );
+    const sb = document.getElementById('status-bar');
+    if (sb) sb.classList.toggle('hidden', searching || (state.activeTab && state.activeTab !== 'chats'));
   }
 
   // Swipe left/right across the list to switch tabs.
@@ -3687,6 +3690,237 @@
     const addBtn = document.getElementById('reels-add');
     if (addBtn) addBtn.addEventListener('click', () => reelInput && reelInput.click());
   })();
+
+  // ============================================================
+  // STATUS / STORY (24h)
+  // ============================================================
+  const STORY_BGS = [
+    'linear-gradient(135deg,#0a7cff,#6c46ff)', 'linear-gradient(135deg,#ff5b73,#e4344f)',
+    'linear-gradient(135deg,#11998e,#38ef7d)', 'linear-gradient(135deg,#f7971e,#ffd200)',
+    'linear-gradient(135deg,#c026d3,#7c3aed)', 'linear-gradient(135deg,#2c3e50,#4ca1af)',
+  ];
+  function timeAgo(iso) {
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m / 60);
+    return h + 'h ago';
+  }
+
+  async function loadStatusFeed() {
+    try {
+      const data = await api('/api/status');
+      state.statusFeed = data.feed || [];
+    } catch (e) { state.statusFeed = state.statusFeed || []; }
+    renderStatusBar();
+  }
+  function renderStatusBar() {
+    const bar = document.getElementById('status-bar');
+    if (!bar || !state.me) return;
+    const feed = state.statusFeed || [];
+    const meGroup = feed.find((g) => g.user && g.user.id === state.me.id);
+    const others = feed.filter((g) => g.user && g.user.id !== state.me.id);
+    let html = `<button class="st-item" data-st-mine>
+        <span class="st-ring ${meGroup ? (meGroup.hasUnseen ? '' : 'seen') : 'add'}">${avatarHtml(state.me, { cls: 'sm' })}<span class="st-plus">+</span></span>
+        <span class="st-name">Your story</span>
+      </button>`;
+    others.forEach((g) => {
+      html += `<button class="st-item" data-st-open="${g.user.id}">
+        <span class="st-ring ${g.hasUnseen ? '' : 'seen'}">${avatarHtml(g.user, { cls: 'sm' })}</span>
+        <span class="st-name">${escapeHtml(String(g.user.displayName || '').split(/\s+/)[0])}</span>
+      </button>`;
+    });
+    bar.innerHTML = html;
+  }
+
+  // story viewer
+  const storyView = document.getElementById('story-view');
+  const statusInput = document.getElementById('status-input');
+  let storyState = null;
+
+  function openStory(group) {
+    if (!group || !group.statuses || !group.statuses.length) return;
+    storyState = { group, idx: 0 };
+    storyView.classList.remove('hidden');
+    document.body.classList.add('reels-open');
+    showStorySlide(0);
+  }
+  function closeStory() {
+    if (storyState) clearTimeout(storyState.timer);
+    storyState = null;
+    storyView.classList.add('hidden');
+    document.body.classList.remove('reels-open');
+    const v = document.querySelector('#story-stage video'); if (v) v.pause();
+    document.getElementById('story-stage').innerHTML = '';
+    loadStatusFeed(); // refresh seen rings
+  }
+  function showStorySlide(i) {
+    if (!storyState) return;
+    const g = storyState.group;
+    if (i >= g.statuses.length) return closeStory();
+    if (i < 0) i = 0;
+    storyState.idx = i;
+    const st = g.statuses[i];
+    clearTimeout(storyState.timer);
+
+    // progress bars
+    document.getElementById('story-bars').innerHTML = g.statuses.map((s, k) =>
+      `<div class="story-bar"><div class="story-bar-fill ${k < i ? 'done' : ''}" ${k === i ? 'data-active' : ''}></div></div>`).join('');
+
+    // stage
+    const stage = document.getElementById('story-stage');
+    const cap = st.text && st.mediaType ? `<div class="story-cap">${escapeHtml(st.text)}</div>` : '';
+    if (st.mediaType === 'image') {
+      stage.innerHTML = `<img class="story-media" src="${escapeHtml(mediaUrl(st.mediaUrl))}" alt="">${cap}`;
+    } else if (st.mediaType === 'video') {
+      stage.innerHTML = `<video class="story-media" src="${escapeHtml(mediaUrl(st.mediaUrl))}" autoplay playsinline></video>${cap}`;
+    } else {
+      stage.innerHTML = `<div class="story-text" style="background:${st.bgColor || STORY_BGS[0]}">${escapeHtml(st.text || '')}</div>`;
+    }
+
+    // who + delete
+    document.getElementById('story-who').innerHTML = `${avatarHtml(g.user, { cls: 'sm' })}<span class="story-who-txt">${escapeHtml(g.user.displayName || '')} · ${timeAgo(st.createdAt)}</span>`;
+    document.getElementById('story-del').classList.toggle('hidden', g.user.id !== state.me.id);
+
+    // mark viewed
+    if (g.user.id !== state.me.id && !st.seen) {
+      st.seen = true;
+      api('/api/status/' + st.id + '/view', { method: 'POST' }).catch(() => {});
+    }
+
+    // advance + progress animation
+    const fill = document.querySelector('#story-bars [data-active]');
+    if (st.mediaType === 'video') {
+      const v = stage.querySelector('video');
+      const startBar = (dur) => { if (fill) { fill.style.animationDuration = (dur || 8) + 's'; fill.classList.add('run'); } };
+      if (v) {
+        v.onloadedmetadata = () => startBar(isFinite(v.duration) ? v.duration : 8);
+        v.onended = () => showStorySlide(i + 1);
+        v.play().catch(() => {});
+        if (v.readyState >= 1) startBar(isFinite(v.duration) ? v.duration : 8);
+      }
+    } else {
+      if (fill) { fill.style.animationDuration = '5s'; fill.classList.add('run'); }
+      storyState.timer = setTimeout(() => showStorySlide(i + 1), 5000);
+    }
+  }
+
+  if (storyView) {
+    document.getElementById('story-close').addEventListener('click', closeStory);
+    document.getElementById('story-prev').addEventListener('click', () => showStorySlide(storyState ? storyState.idx - 1 : 0));
+    document.getElementById('story-next').addEventListener('click', () => showStorySlide(storyState ? storyState.idx + 1 : 0));
+    document.getElementById('story-del').addEventListener('click', async () => {
+      if (!storyState) return;
+      const st = storyState.group.statuses[storyState.idx];
+      if (!confirm('Delete this status?')) return;
+      try {
+        await api('/api/status/' + st.id, { method: 'DELETE' });
+        storyState.group.statuses.splice(storyState.idx, 1);
+        if (!storyState.group.statuses.length) return closeStory();
+        showStorySlide(Math.min(storyState.idx, storyState.group.statuses.length - 1));
+      } catch (e) { toast('⚠️', 'Error', e.message); }
+    });
+  }
+
+  // status bar interactions
+  (function () {
+    const bar = document.getElementById('status-bar');
+    if (!bar) return;
+    bar.addEventListener('click', (e) => {
+      if (e.target.closest('[data-st-mine]')) { openAddStatusMenu(); return; }
+      const open = e.target.closest('[data-st-open]');
+      if (open) {
+        const uid = Number(open.dataset.stOpen);
+        const g = (state.statusFeed || []).find((x) => x.user && x.user.id === uid);
+        if (g) openStory(g);
+      }
+    });
+  })();
+
+  function openAddStatusMenu() {
+    const myGroup = (state.statusFeed || []).find((g) => g.user && g.user.id === state.me.id);
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="mm-actions">
+          <button class="mm-act" data-add="media">Photo / Video</button>
+          <button class="mm-act" data-add="text">Text status</button>
+          ${myGroup ? `<button class="mm-act" data-add="view">View my story</button>` : ''}
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-add]');
+      if (a) {
+        close();
+        if (a.dataset.add === 'media') statusInput && statusInput.click();
+        else if (a.dataset.add === 'text') openTextStatusComposer();
+        else if (a.dataset.add === 'view' && myGroup) openStory(myGroup);
+        return;
+      }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+  }
+
+  if (statusInput) statusInput.addEventListener('change', async () => {
+    let file = statusInput.files && statusInput.files[0];
+    statusInput.value = '';
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) { toast('⚠️', 'Too large', 'Max 100 MB'); return; }
+    const isImg = file.type.startsWith('image/');
+    if (isImg) { try { file = await compressImage(file); } catch (e) {} }
+    toast('📤', 'Posting', 'Uploading your status…');
+    try {
+      const up = await uploadBlob(file, '');
+      await api('/api/status', { method: 'POST', body: { mediaUrl: up.url, mediaType: isImg ? 'image' : 'video' } });
+      await loadStatusFeed();
+      toast('✅', 'Posted', 'Status added for 24h');
+    } catch (e) { toast('⚠️', 'Failed', e.message || 'Could not post'); }
+  });
+
+  function openTextStatusComposer() {
+    let bg = STORY_BGS[0];
+    const overlay = document.createElement('div');
+    overlay.className = 'status-compose';
+    overlay.innerHTML = `
+      <div class="sc-stage" id="sc-stage" style="background:${bg}">
+        <textarea id="sc-text" maxlength="700" placeholder="Type a status…"></textarea>
+      </div>
+      <div class="sc-bar">
+        <div class="sc-colors">${STORY_BGS.map((b, i) => `<button class="sc-color ${i === 0 ? 'on' : ''}" data-bg="${b}" style="background:${b}"></button>`).join('')}</div>
+        <button class="sc-cancel" data-cancel="1">Cancel</button>
+        <button class="sc-post" id="sc-post">Post</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    setTimeout(() => overlay.querySelector('#sc-text').focus(), 100);
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', async (e) => {
+      const c = e.target.closest('[data-bg]');
+      if (c) {
+        bg = c.dataset.bg;
+        overlay.querySelector('#sc-stage').style.background = bg;
+        overlay.querySelectorAll('.sc-color').forEach((b) => b.classList.toggle('on', b === c));
+        return;
+      }
+      if (e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('#sc-post')) {
+        const text = overlay.querySelector('#sc-text').value.trim();
+        if (!text) { toast('⚠️', 'Empty', 'Type something first'); return; }
+        try {
+          await api('/api/status', { method: 'POST', body: { text, bgColor: bg } });
+          close();
+          await loadStatusFeed();
+          toast('✅', 'Posted', 'Status added for 24h');
+        } catch (e2) { toast('⚠️', 'Failed', e2.message); }
+      }
+    });
+  }
 
   boot();
 })();

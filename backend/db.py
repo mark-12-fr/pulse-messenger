@@ -11,7 +11,7 @@ from both HTTP request handlers and Socket.IO event handlers.
 
 import os
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import (
     create_engine, select, or_, and_, func, delete,
@@ -207,6 +207,24 @@ class Reel(Base):
 class ReelLike(Base):
     __tablename__ = "reel_likes"
     reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class Status(Base):
+    __tablename__ = "statuses"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    media_url = mapped_column(Text, nullable=True)
+    media_type = mapped_column(Text, nullable=True)   # 'image' | 'video' | None (text status)
+    text = mapped_column(Text, nullable=True)
+    bg_color = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class StatusView(Base):
+    __tablename__ = "status_views"
+    status_id = mapped_column(Integer, ForeignKey("statuses.id", ondelete="CASCADE"), primary_key=True)
     user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
 
@@ -1277,6 +1295,90 @@ def delete_reel(reel_id, user_id):
         if not r or r.user_id != user_id:
             return False
         s.delete(r)
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Status / Story (24h)
+# ---------------------------------------------------------------------------
+def public_status(st):
+    return {
+        "id": st.id,
+        "userId": st.user_id,
+        "mediaUrl": st.media_url,
+        "mediaType": st.media_type,
+        "text": st.text or "",
+        "bgColor": st.bg_color,
+        "createdAt": _iso(st.created_at),
+    }
+
+
+def create_status(user_id, media_url=None, media_type=None, text=None, bg_color=None):
+    with session_scope() as s:
+        st = Status(user_id=user_id, media_url=media_url or None, media_type=media_type or None,
+                    text=(text or None), bg_color=bg_color or None, created_at=now_utc())
+        s.add(st)
+        s.flush()
+        return public_status(st)
+
+
+def status_feed(me_id):
+    """Statuses from me + my friends in the last 24h, grouped by user."""
+    cutoff = now_utc() - timedelta(hours=24)
+    with session_scope() as s:
+        fr = s.execute(
+            select(Friendship).where(
+                or_(Friendship.requester_id == me_id, Friendship.addressee_id == me_id),
+                Friendship.status == "accepted",
+            )
+        ).scalars().all()
+        friend_ids = [(f.addressee_id if f.requester_id == me_id else f.requester_id) for f in fr]
+        user_ids = list(set(friend_ids) | {me_id})
+
+        rows = s.execute(
+            select(Status).where(Status.user_id.in_(user_ids), Status.created_at >= cutoff)
+            .order_by(Status.created_at.asc())
+        ).scalars().all()
+        if not rows:
+            return []
+        sid_list = [r.id for r in rows]
+        my_views = set(s.execute(
+            select(StatusView.status_id).where(StatusView.status_id.in_(sid_list), StatusView.user_id == me_id)
+        ).scalars().all())
+        authors = {
+            u.id: public_user(u)
+            for u in s.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+        }
+        groups = {}
+        for r in rows:
+            g = groups.setdefault(r.user_id, {"user": authors.get(r.user_id), "statuses": [], "hasUnseen": False, "_latest": ""})
+            ps = public_status(r)
+            ps["seen"] = r.id in my_views
+            g["statuses"].append(ps)
+            g["_latest"] = ps["createdAt"] or g["_latest"]
+            if not ps["seen"] and r.user_id != me_id:
+                g["hasUnseen"] = True
+        result = [g for g in groups.values() if g["user"]]
+        # stable sorts (apply least-significant first): most-recent, then unseen, then me
+        result.sort(key=lambda g: g["_latest"], reverse=True)
+        result.sort(key=lambda g: (g["user"]["id"] != me_id, not g["hasUnseen"]))
+        for g in result:
+            g.pop("_latest", None)
+        return result
+
+
+def mark_status_viewed(status_id, user_id):
+    with session_scope() as s:
+        if s.get(Status, status_id) and not s.get(StatusView, (status_id, user_id)):
+            s.add(StatusView(status_id=status_id, user_id=user_id, created_at=now_utc()))
+
+
+def delete_status(status_id, user_id):
+    with session_scope() as s:
+        st = s.get(Status, status_id)
+        if not st or st.user_id != user_id:
+            return False
+        s.delete(st)
         return True
 
 

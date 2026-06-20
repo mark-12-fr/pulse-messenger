@@ -797,6 +797,45 @@ def remove_reel(rid):
     return jsonify(ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Status / Story (24h)
+# ---------------------------------------------------------------------------
+@app.post("/api/status")
+@auth_required
+def create_status():
+    data = request.get_json(silent=True) or {}
+    media_url = str(data.get("mediaUrl") or "").strip() or None
+    media_type = str(data.get("mediaType") or "").strip() or None
+    text = str(data.get("text") or "").strip()[:700] or None
+    bg = str(data.get("bgColor") or "").strip()[:32] or None
+    if not media_url and not text:
+        return jsonify(error="Empty status."), 400
+    st = db.create_status(g.user["id"], media_url=media_url, media_type=media_type, text=text, bg_color=bg)
+    return jsonify(status=st)
+
+
+@app.get("/api/status")
+@auth_required
+def status_feed():
+    return jsonify(feed=db.status_feed(g.user["id"]))
+
+
+@app.post("/api/status/<int:sid>/view")
+@auth_required
+def view_status(sid):
+    db.mark_status_viewed(sid, g.user["id"])
+    return jsonify(ok=True)
+
+
+@app.delete("/api/status/<int:sid>")
+@auth_required
+def remove_status(sid):
+    ok = db.delete_status(sid, g.user["id"])
+    if not ok:
+        return jsonify(error="Not found."), 404
+    return jsonify(ok=True)
+
+
 @app.errorhandler(413)
 def too_large(_e):
     return jsonify(error="File is too large (max 100 MB)."), 413
