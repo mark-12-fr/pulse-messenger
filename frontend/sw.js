@@ -1,6 +1,6 @@
 /* Tea service worker — keeps the app fresh and shows push notifications.
    The push payload never contains the message text (privacy): just "X sent you a message". */
-const SHELL = 'tea-shell-v2';
+const SHELL = 'tea-shell-v3';
 
 self.addEventListener('install', () => self.skipWaiting());
 
@@ -40,6 +40,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
+  const isCall = data.type === 'call';
   const title = data.title || 'Tea';
   const body = data.body || 'New message';
   event.waitUntil((async () => {
@@ -50,7 +51,7 @@ self.addEventListener('push', (event) => {
         else await self.navigator.clearAppBadge();
       }
     } catch (e) {}
-    if (!data.force) {
+    if (!data.force && !isCall) {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       // app is open AND in the foreground -> the in-app toast handles it; skip
       if (all.some((c) => c.visibilityState === 'visible')) return;
@@ -59,12 +60,12 @@ self.addEventListener('push', (event) => {
       body,
       icon: '/icon-192.png',
       badge: '/icon-192.png',
-      tag: 'tea-message',
+      tag: isCall ? 'tea-call' : 'tea-message',
       renotify: true,        // re-alert (sound + buzz) for each new message
       silent: false,         // play the device's notification sound
-      vibrate: [120, 60, 120, 60, 120],
-      requireInteraction: false,
-      data: { conversationId: data.conversationId || null },
+      vibrate: isCall ? [400, 200, 400, 200, 400, 200, 400] : [120, 60, 120, 60, 120],
+      requireInteraction: !!isCall,  // a call stays up until tapped
+      data: { conversationId: data.conversationId || null, type: data.type || null },
     });
   })());
 });

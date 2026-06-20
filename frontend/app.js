@@ -3197,7 +3197,8 @@
       callId: 'call_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9),
       peer, media: media === 'video' ? 'video' : 'audio', role: 'caller', status: 'calling',
       local, remote: null, pc: null, offer: null, remoteDescSet: false, pendingIce: [],
-      timer: null, dropTimer: null, secs: 0, muted: false, camOff: false,
+      timer: null, dropTimer: null, noAnswerTimer: null, offlineRing: false,
+      secs: 0, muted: false, camOff: false,
     };
     openCallUI();
     attachLocalVideo();
@@ -3209,8 +3210,16 @@
       state.socket.emit('call:invite',
         { toUserId: peer.id, callId: activeCall.callId, media: activeCall.media, sdp: { type: offer.type, sdp: offer.sdp } },
         (resp) => {
+          if (!activeCall || activeCall.status !== 'calling') return;
           if (resp && resp.error) {
-            hangUp(resp.error === 'offline' ? (friendName(peer) + ' is unavailable') : 'Could not start the call', false);
+            hangUp('Could not start the call', false);
+          } else if (resp && resp.awaitingPeer) {
+            // Callee was offline — we've rung their phone with a push. Keep
+            // ringing a while in case they open the app to answer.
+            activeCall.offlineRing = true;
+            updateCallStatus();
+            clearTimeout(activeCall.noAnswerTimer);
+            activeCall.noAnswerTimer = setTimeout(() => hangUp('No answer', true), 60000);
           }
         });
     } catch (e) { hangUp('Call failed', false); }
@@ -3270,6 +3279,7 @@
   async function onCallAnswered(data) {
     if (!activeCall || activeCall.role !== 'caller' || !activeCall.pc) return;
     if (data && data.callId && data.callId !== activeCall.callId) return;
+    clearTimeout(activeCall.noAnswerTimer);
     try {
       await activeCall.pc.setRemoteDescription(data.sdp);
       activeCall.remoteDescSet = true;
@@ -3294,6 +3304,7 @@
 
   function onCallConnected() {
     if (!activeCall || activeCall.status === 'connected') return;
+    clearTimeout(activeCall.noAnswerTimer);
     activeCall.status = 'connected';
     activeCall.secs = 0;
     clearInterval(activeCall.timer);
@@ -3318,6 +3329,7 @@
     if (!activeCall) return;
     try { clearInterval(activeCall.timer); } catch (e) {}
     try { clearTimeout(activeCall.dropTimer); } catch (e) {}
+    try { clearTimeout(activeCall.noAnswerTimer); } catch (e) {}
     try { if (activeCall.local) activeCall.local.getTracks().forEach((t) => t.stop()); } catch (e) {}
     try {
       if (activeCall.pc) {
@@ -3359,7 +3371,7 @@
   function updateCallStatus() {
     const el = document.getElementById('call-status'); if (!el || !activeCall) return;
     let t = '';
-    if (activeCall.status === 'calling') t = 'Calling…';
+    if (activeCall.status === 'calling') t = activeCall.offlineRing ? 'Ringing… (notifying their phone)' : 'Calling…';
     else if (activeCall.status === 'ringing') t = activeCall.media === 'video' ? 'Incoming video call' : 'Incoming voice call';
     else if (activeCall.status === 'connecting') t = 'Connecting…';
     else if (activeCall.status === 'connected') t = fmtCallTime(activeCall.secs);
