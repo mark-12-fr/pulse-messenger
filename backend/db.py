@@ -10,6 +10,7 @@ from both HTTP request handlers and Socket.IO event handlers.
 """
 
 import os
+import json
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
@@ -155,6 +156,16 @@ class MessageReaction(Base):
     emoji = mapped_column(String(16), nullable=False)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_reaction_user"),)
+
+
+class PollVote(Base):
+    __tablename__ = "poll_votes"
+    id = mapped_column(Integer, primary_key=True)
+    message_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    option_index = mapped_column(Integer, nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_pollvote_user"),)
 
 
 class PushSubscription(Base):
@@ -396,6 +407,7 @@ def public_message(m):
         "createdAt": _iso(m.created_at),
         "reactions": [],
         "replyTo": None,
+        "poll": None,
     }
 
 
@@ -404,6 +416,8 @@ def _msg_preview(m):
         return "unsent a message"
     if getattr(m, "view_once", False):
         return "👁️ Photo"
+    if m.attachment_type == "poll":
+        return "📊 Poll"
     if m.attachment_type == "image":
         return "📷 Photo"
     if m.attachment_type == "video":
@@ -835,6 +849,69 @@ def consume_view_once(message_id, viewer_id):
         return {"conversationId": m.conversation_id, "senderId": m.sender_id}
 
 
+# ---------------------------------------------------------------------------
+# Polls (stored on the message itself; votes in poll_votes)
+# ---------------------------------------------------------------------------
+def _poll_payload(s, m):
+    try:
+        meta = json.loads(m.attachment_name or "{}")
+    except Exception:
+        meta = {}
+    rows = s.execute(
+        select(PollVote.user_id, PollVote.option_index).where(PollVote.message_id == m.id)
+    ).all()
+    return {
+        "question": meta.get("q", ""),
+        "options": meta.get("opts") or [],
+        "votes": [{"userId": uid, "optionIndex": oi} for uid, oi in rows],
+    }
+
+
+def create_poll_message(conversation_id, sender_id, question, options):
+    opts = [str(o).strip()[:80] for o in (options or []) if str(o).strip()][:4]
+    question = str(question or "").strip()[:200]
+    if not question or len(opts) < 2:
+        return None
+    with session_scope() as s:
+        m = Message(
+            conversation_id=conversation_id, sender_id=sender_id,
+            attachment_type="poll",
+            attachment_name=json.dumps({"q": question, "opts": opts}),
+            created_at=now_utc(),
+        )
+        s.add(m)
+        s.flush()
+        d = public_message(m)
+        d["poll"] = _poll_payload(s, m)
+        return d
+
+
+def vote_poll(message_id, user_id, option_index):
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m or m.attachment_type != "poll":
+            return None
+        try:
+            meta = json.loads(m.attachment_name or "{}")
+        except Exception:
+            meta = {}
+        n = len(meta.get("opts") or [])
+        if option_index < 0 or option_index >= n:
+            return None
+        existing = s.execute(
+            select(PollVote).where(PollVote.message_id == message_id, PollVote.user_id == user_id)
+        ).scalar_one_or_none()
+        if existing:
+            if existing.option_index == option_index:
+                s.delete(existing)          # tap your own choice again to un-vote
+            else:
+                existing.option_index = option_index
+        else:
+            s.add(PollVote(message_id=message_id, user_id=user_id, option_index=option_index))
+        s.flush()
+        return {"conversationId": m.conversation_id, "poll": _poll_payload(s, m)}
+
+
 def get_messages(conversation_id, before_id=None, limit=40):
     """Return up to ``limit`` messages (ascending). With ``before_id``, returns the
     page of messages immediately older than that id (for lazy-loading history)."""
@@ -856,6 +933,12 @@ def get_messages(conversation_id, before_id=None, limit=40):
                 bucket.setdefault(r.message_id, []).append({"emoji": r.emoji, "userId": r.user_id})
             for m in msgs:
                 m["reactions"] = bucket.get(m["id"], [])
+        poll_rows = {r.id: r for r in rows if r.attachment_type == "poll"}
+        if poll_rows:
+            pmap = {rid: _poll_payload(s, r) for rid, r in poll_rows.items()}
+            for m in msgs:
+                if m["id"] in pmap:
+                    m["poll"] = pmap[m["id"]]
         reply_ids = {r.reply_to_id for r in rows if r.reply_to_id}
         if reply_ids:
             originals = s.execute(

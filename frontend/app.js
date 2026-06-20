@@ -475,6 +475,7 @@
     socket.on('message:reaction', onMessageReaction);
     socket.on('message:unsent', onMessageUnsent);
     socket.on('message:consumed', onMessageConsumed);
+    socket.on('poll:update', onPollUpdate);
     socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
     socket.on('conversation:pin', onConversationPin);
@@ -1261,6 +1262,8 @@
       inner = `<div class="bubble voice">${voicePlayerHtml(m)}</div>`;
     } else if (m.attachmentType === 'location') {
       inner = `<div class="bubble loc">${locationCardHtml(m)}</div>`;
+    } else if (m.attachmentType === 'poll') {
+      inner = `<div class="bubble poll">${pollHtml(m)}</div>`;
     } else if (m.attachmentType === 'file') {
       const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
@@ -1526,6 +1529,7 @@
           <button class="mm-act" data-att="camera">Camera</button>
           <button class="mm-act" data-att="media">Photo &amp; Video</button>
           <button class="mm-act" data-att="location">📍 Location</button>
+          <button class="mm-act" data-att="poll">📊 Poll</button>
           <button class="mm-act" data-att="file">File</button>
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
@@ -1542,6 +1546,7 @@
         if (kind === 'camera') { cameraInput.click(); }
         else if (kind === 'media') { fileInput.accept = 'image/*,video/*'; fileInput.click(); }
         else if (kind === 'location') { shareLocation(); }
+        else if (kind === 'poll') { openPollComposer(); }
         else { fileInput.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt,.zip'; fileInput.click(); }
         return;
       }
@@ -1579,6 +1584,76 @@
         ? 'Permission denied — enable location access to share.'
         : "Couldn't get your location. Try again.");
     }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+  }
+
+  // Create a poll (works in 1-to-1 and group chats).
+  function openPollComposer() {
+    if (!state.current) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu poll-composer';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="settings-title">Create poll</div>
+        <div class="pc-box">
+          <input id="pc-q" class="pc-q" maxlength="200" placeholder="Ask a question…">
+          <div id="pc-opts">
+            <input class="pc-opt" maxlength="80" placeholder="Option 1">
+            <input class="pc-opt" maxlength="80" placeholder="Option 2">
+          </div>
+          <button class="pc-add" id="pc-add">+ Add option</button>
+        </div>
+        <div class="mm-actions">
+          <button class="mm-act primary" id="pc-create">Create poll</button>
+          <button class="mm-act" data-cancel="1">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target.closest('#pc-add')) {
+        const box = overlay.querySelector('#pc-opts');
+        const n = box.querySelectorAll('.pc-opt').length;
+        if (n >= 4) return;
+        const inp = document.createElement('input');
+        inp.className = 'pc-opt'; inp.maxLength = 80; inp.placeholder = 'Option ' + (n + 1);
+        box.appendChild(inp); inp.focus();
+        if (n + 1 >= 4) { const ab = overlay.querySelector('#pc-add'); if (ab) ab.style.display = 'none'; }
+        return;
+      }
+      if (e.target.closest('#pc-create')) {
+        const q = overlay.querySelector('#pc-q').value.trim();
+        const options = Array.from(overlay.querySelectorAll('.pc-opt')).map((i) => i.value.trim()).filter(Boolean);
+        if (!q) { toast('⚠️', 'Add a question', 'Your poll needs a question.'); return; }
+        if (options.length < 2) { toast('⚠️', 'Add options', 'A poll needs at least 2 options.'); return; }
+        if (state.socket) state.socket.emit('poll:create', { ...sendTarget(), question: q, options }, (resp) => {
+          if (resp && resp.error) toast('⚠️', 'Not created', resp.error);
+        });
+        close();
+        return;
+      }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
+    });
+    setTimeout(() => { const q = overlay.querySelector('#pc-q'); if (q) q.focus(); }, 260);
+  }
+
+  function pollHtml(m) {
+    const p = m.poll || { question: '', options: [], votes: [] };
+    const votes = p.votes || [];
+    const total = votes.length;
+    const myV = votes.find((v) => v.userId === state.me.id);
+    const myVote = myV ? myV.optionIndex : null;
+    const opts = (p.options || []).map((opt, i) => {
+      const c = votes.filter((v) => v.optionIndex === i).length;
+      const pct = total ? Math.round(c / total * 100) : 0;
+      return `<button class="poll-opt ${myVote === i ? 'mine' : ''}" data-pollvote="${m.id}" data-opt="${i}">
+          <span class="poll-bar" style="width:${pct}%"></span>
+          <span class="poll-opt-label">${escapeHtml(opt)}</span>
+          <span class="poll-opt-pct">${total ? pct + '%' : ''}</span>
+        </button>`;
+    }).join('');
+    return `<div class="poll-q">📊 ${escapeHtml(p.question)}</div><div class="poll-opts">${opts}</div>` +
+      `<div class="poll-total">${total} vote${total === 1 ? '' : 's'}${myVote === null ? ' · tap to vote' : ''}</div>`;
   }
 
   async function handlePickedFiles(files) {
@@ -2217,6 +2292,26 @@
     // tap a reply quote -> jump to the original message
     const jump = e.target.closest('[data-reply-jump]');
     if (jump) { jumpToMessage(Number(jump.dataset.replyJump)); return; }
+    // tap a poll option -> vote (or un-vote by tapping your choice again)
+    const pvote = e.target.closest('[data-pollvote]');
+    if (pvote) {
+      const mid = Number(pvote.dataset.pollvote);
+      const idx = Number(pvote.dataset.opt);
+      const mm = state.messages.find((x) => x.id === mid);
+      if (mm && mm.poll && state.socket) {
+        const mine = (mm.poll.votes || []).find((v) => v.userId === state.me.id);
+        let next = (mm.poll.votes || []).filter((v) => v.userId !== state.me.id);
+        if (!mine || mine.optionIndex !== idx) next.push({ userId: state.me.id, optionIndex: idx });
+        mm.poll.votes = next;
+        const wrap = messagesEl.querySelector(`.msg[data-mid="${mid}"] .bwrap`);
+        if (wrap) wrap.outerHTML = renderBubble(mm);
+        haptic();
+        state.socket.emit('poll:vote', { messageId: mid, optionIndex: idx }, (resp) => {
+          if (resp && resp.error) toast('⚠️', 'Vote failed', resp.error);
+        });
+      }
+      return;
+    }
     // tap a view-once photo -> open it once, then it's burned for everyone
     const vonce = e.target.closest('[data-vonce]');
     if (vonce) {
@@ -2908,6 +3003,18 @@
     if (conv && conv.lastMessage && conv.lastMessage.id === payload.messageId) {
       conv.lastMessage = m || conv.lastMessage;
       renderChats();
+    }
+  }
+
+  // Live poll results: someone voted → refresh that poll for everyone.
+  function onPollUpdate(payload) {
+    if (!payload || !payload.poll) return;
+    const m = (state.messages || []).find((x) => x.id === payload.messageId);
+    if (!m) return;
+    m.poll = payload.poll;
+    if (state.current && state.current.conversationId === payload.conversationId) {
+      const wrap = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"] .bwrap`);
+      if (wrap) wrap.outerHTML = renderBubble(m);
     }
   }
 
