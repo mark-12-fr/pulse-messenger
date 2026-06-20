@@ -732,7 +732,8 @@ def upload_sign():
     """Return a signed URL so the client can upload directly to Supabase."""
     data = request.get_json(silent=True) or {}
     name = str(data.get("name") or "file")[:200]
-    prefix = "avatars" if data.get("kind") == "avatar" else ""
+    kind = data.get("kind")
+    prefix = "avatars" if kind == "avatar" else ("reels" if kind == "reel" else "")
     info = storage.create_signed_upload(name, prefix=prefix)
     if not info:
         return jsonify(error="Direct upload unavailable."), 503
@@ -747,7 +748,8 @@ def upload():
         return jsonify(error="No file uploaded."), 400
     # Avatars go to a permanent sub-folder so the privacy auto-clear (which only
     # sweeps the bucket root) never deletes them.
-    prefix = "avatars" if request.form.get("kind") == "avatar" else ""
+    _k = request.form.get("kind")
+    prefix = "avatars" if _k == "avatar" else ("reels" if _k == "reel" else "")
     try:
         info = storage.save_file(f, prefix=prefix)
     except storage.TooLarge:
@@ -755,6 +757,44 @@ def upload():
     except Exception:
         return jsonify(error="Upload failed."), 400
     return jsonify(info)
+
+
+# ---------------------------------------------------------------------------
+# Reels (short videos)
+# ---------------------------------------------------------------------------
+@app.post("/api/reels")
+@auth_required
+def create_reel():
+    data = request.get_json(silent=True) or {}
+    video_url = str(data.get("videoUrl") or "").strip()
+    caption = str(data.get("caption") or "").strip()[:500]
+    if not video_url:
+        return jsonify(error="No video."), 400
+    reel = db.create_reel(g.user["id"], video_url, caption)
+    return jsonify(reel=reel)
+
+
+@app.get("/api/reels")
+@auth_required
+def get_reels():
+    before = request.args.get("before", type=int)
+    reels = db.list_reels(g.user["id"], before_id=before, limit=10)
+    return jsonify(reels=reels, hasMore=len(reels) == 10)
+
+
+@app.post("/api/reels/<int:rid>/like")
+@auth_required
+def like_reel(rid):
+    return jsonify(db.toggle_reel_like(rid, g.user["id"]))
+
+
+@app.delete("/api/reels/<int:rid>")
+@auth_required
+def remove_reel(rid):
+    ok = db.delete_reel(rid, g.user["id"])
+    if not ok:
+        return jsonify(error="Not found."), 404
+    return jsonify(ok=True)
 
 
 @app.errorhandler(413)

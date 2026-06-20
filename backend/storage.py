@@ -218,8 +218,8 @@ def clear_old_media(retention_hours=24):
                 break
             for it in items:
                 name = it.get("name")
-                # skip the permanent avatars/ folder and folder placeholders (id is null)
-                if not name or name.startswith("avatars/") or it.get("id") is None:
+                # skip permanent folders (avatars/, reels/) and folder placeholders (id is null)
+                if not name or name.startswith("avatars/") or name.startswith("reels/") or it.get("id") is None:
                     continue
                 ts = _parse_iso(it.get("created_at"))
                 if ts and ts < boundary:

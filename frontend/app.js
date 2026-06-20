@@ -3313,6 +3313,9 @@
     devices: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="13" height="10" rx="2"/><path d="M2 18h13"/><rect x="17" y="8" width="5" height="12" rx="1.5"/></svg>',
     share: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5 8.6 10.5"/></svg>',
     pin: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 3h6l-1 7 3 2.5V14H7v-1.5L10 10 9 3Z"/></svg>',
+    heart: '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.3 2 4.5 5.6 4.5c2 0 3.4 1.1 4.4 2.5 1-1.4 2.4-2.5 4.4-2.5 3.6 0 5.2 3.8 3.6 7.2C19.5 16.4 12 21 12 21Z"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
+    muted: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m23 9-6 6M17 9l6 6"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
@@ -3540,6 +3543,150 @@
     if (ad) pendingAdd = String(ad).slice(0, 32);
     if (oc || ad) history.replaceState({}, '', location.pathname);
   } catch (e) {}
+
+  // ============================================================
+  // REELS (short videos — TikTok-style vertical feed)
+  // ============================================================
+  (function reelsModule() {
+    const view = document.getElementById('reels-view');
+    const feed = document.getElementById('reels-feed');
+    const reelInput = document.getElementById('reel-input');
+    if (!view || !feed) return;
+    let reels = [];
+    let hasMore = true;
+    let loading = false;
+    let unmuted = false;
+    let io = null;
+
+    function openReels() {
+      view.classList.remove('hidden');
+      document.body.classList.add('reels-open');
+      if (!reels.length) loadReels(true);
+      else observeReels();
+    }
+    function closeReels() {
+      view.classList.add('hidden');
+      document.body.classList.remove('reels-open');
+      feed.querySelectorAll('video').forEach((v) => v.pause());
+      if (io) io.disconnect();
+    }
+
+    async function loadReels(first) {
+      if (loading || (!hasMore && !first)) return;
+      loading = true;
+      try {
+        const q = (!first && reels.length) ? '?before=' + reels[reels.length - 1].id : '';
+        const data = await api('/api/reels' + q);
+        hasMore = !!data.hasMore;
+        const fresh = data.reels || [];
+        if (first) { reels = fresh; feed.innerHTML = ''; }
+        else { reels = reels.concat(fresh); }
+        fresh.forEach((r) => feed.appendChild(renderReel(r)));
+        if (first && !reels.length) {
+          feed.innerHTML = '<div class="reels-empty">No reels yet.<br>Tap ＋ to post the first one! 🎬</div>';
+        }
+        observeReels();
+      } catch (e) { /* ignore */ }
+      finally { loading = false; }
+    }
+
+    function renderReel(r) {
+      const el = document.createElement('div');
+      el.className = 'reel';
+      el.dataset.id = r.id;
+      const mine = state.me && r.author && r.author.id === state.me.id;
+      el.innerHTML =
+        `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline muted preload="metadata"></video>
+        <div class="reel-mute">${IC.muted}</div>
+        <div class="reel-side">
+          <button class="reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
+          ${mine ? `<button class="reel-del" data-del aria-label="Delete">${IC.trash}</button>` : ''}
+        </div>
+        <div class="reel-meta">
+          <div class="reel-author">${avatarHtml(r.author || { displayName: '?' }, { cls: 'sm' })}<span class="reel-author-name">${escapeHtml((r.author && r.author.displayName) || 'Someone')}</span></div>
+          ${r.caption ? `<div class="reel-caption">${escapeHtml(r.caption)}</div>` : ''}
+        </div>`;
+      return el;
+    }
+
+    function observeReels() {
+      if (io) io.disconnect();
+      feed.classList.toggle('unmuted', unmuted);
+      io = new IntersectionObserver((entries) => {
+        entries.forEach((e) => {
+          const v = e.target.querySelector('video');
+          if (!v) return;
+          if (e.isIntersecting && e.intersectionRatio >= 0.6) {
+            v.muted = !unmuted;
+            v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+          } else { v.pause(); }
+        });
+      }, { root: feed, threshold: [0, 0.6, 1] });
+      feed.querySelectorAll('.reel').forEach((el) => io.observe(el));
+    }
+
+    feed.addEventListener('click', async (e) => {
+      const reelEl = e.target.closest('.reel');
+      if (!reelEl) return;
+      const id = Number(reelEl.dataset.id);
+      const likeBtn = e.target.closest('[data-like]');
+      if (likeBtn) {
+        try {
+          const r = await api('/api/reels/' + id + '/like', { method: 'POST' });
+          likeBtn.classList.toggle('on', r.liked);
+          likeBtn.querySelector('.reel-like-n').textContent = r.likeCount;
+          haptic();
+        } catch (_) {}
+        return;
+      }
+      if (e.target.closest('[data-del]')) {
+        if (!confirm('Delete this reel?')) return;
+        try { await api('/api/reels/' + id, { method: 'DELETE' }); reels = reels.filter((x) => x.id !== id); reelEl.remove(); } catch (_) {}
+        return;
+      }
+      // tap the video: first tap unmutes everything; after that, toggle play/pause
+      const v = reelEl.querySelector('video');
+      if (!v) return;
+      if (!unmuted) {
+        unmuted = true;
+        feed.classList.add('unmuted');
+        feed.querySelectorAll('video').forEach((x) => { x.muted = false; });
+        v.play().catch(() => {});
+      } else if (v.paused) v.play().catch(() => {});
+      else v.pause();
+    });
+
+    feed.addEventListener('scroll', () => {
+      if (feed.scrollTop + feed.clientHeight * 2.5 > feed.scrollHeight) loadReels(false);
+    }, { passive: true });
+
+    if (reelInput) reelInput.addEventListener('change', async () => {
+      const file = reelInput.files && reelInput.files[0];
+      reelInput.value = '';
+      if (!file) return;
+      if (!file.type.startsWith('video/')) { toast('⚠️', 'Video only', 'Pick a video for your reel'); return; }
+      if (file.size > 100 * 1024 * 1024) { toast('⚠️', 'Too large', 'Max 100 MB'); return; }
+      const caption = (prompt('Caption (optional):') || '').slice(0, 500);
+      toast('📤', 'Posting', 'Uploading your reel…');
+      try {
+        const up = await uploadBlob(file, 'reel');
+        const { reel } = await api('/api/reels', { method: 'POST', body: { videoUrl: up.url, caption } });
+        reels.unshift(reel);
+        if (feed.querySelector('.reels-empty')) feed.innerHTML = '';
+        feed.insertBefore(renderReel(reel), feed.firstChild);
+        feed.scrollTo({ top: 0 });
+        observeReels();
+        toast('✅', 'Posted', 'Your reel is live!');
+      } catch (e2) { toast('⚠️', 'Failed', e2.message || 'Could not post'); }
+    });
+
+    const reelsBtn = document.getElementById('reels-btn');
+    if (reelsBtn) reelsBtn.addEventListener('click', openReels);
+    const closeBtn = document.getElementById('reels-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeReels);
+    const addBtn = document.getElementById('reels-add');
+    if (addBtn) addBtn.addEventListener('click', () => reelInput && reelInput.click());
+  })();
 
   boot();
 })();

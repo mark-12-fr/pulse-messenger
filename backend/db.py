@@ -195,6 +195,22 @@ class Block(Base):
     __table_args__ = (UniqueConstraint("blocker_id", "blocked_id", name="uq_block_pair"),)
 
 
+class Reel(Base):
+    __tablename__ = "reels"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    video_url = mapped_column(Text, nullable=False)
+    caption = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ReelLike(Base):
+    __tablename__ = "reel_likes"
+    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     try:
@@ -1184,6 +1200,84 @@ def blocked_ids(me_id):
             select(Block.blocked_id).where(Block.blocker_id == me_id)
         ).scalars().all()
         return list(rows)
+
+
+# ---------------------------------------------------------------------------
+# Reels (short videos)
+# ---------------------------------------------------------------------------
+def public_reel(r, author, like_count, liked_by_me):
+    return {
+        "id": r.id,
+        "videoUrl": r.video_url,
+        "caption": r.caption or "",
+        "author": author,
+        "likeCount": int(like_count or 0),
+        "likedByMe": bool(liked_by_me),
+        "createdAt": _iso(r.created_at),
+    }
+
+
+def create_reel(user_id, video_url, caption):
+    with session_scope() as s:
+        r = Reel(user_id=user_id, video_url=video_url, caption=(caption or None), created_at=now_utc())
+        s.add(r)
+        s.flush()
+        author = public_user(s.get(User, user_id))
+        return public_reel(r, author, 0, False)
+
+
+def list_reels(me_id, before_id=None, limit=10):
+    """Newest-first feed of reels, with author + like info, batched."""
+    with session_scope() as s:
+        q = select(Reel)
+        if before_id:
+            q = q.where(Reel.id < before_id)
+        reels = s.execute(q.order_by(Reel.id.desc()).limit(limit)).scalars().all()
+        if not reels:
+            return []
+        rid_list = [r.id for r in reels]
+        uid_list = list({r.user_id for r in reels})
+        authors = {
+            u.id: public_user(u)
+            for u in s.execute(select(User).where(User.id.in_(uid_list))).scalars().all()
+        }
+        like_counts = dict(s.execute(
+            select(ReelLike.reel_id, func.count(ReelLike.user_id))
+            .where(ReelLike.reel_id.in_(rid_list)).group_by(ReelLike.reel_id)
+        ).all())
+        my_likes = set(s.execute(
+            select(ReelLike.reel_id).where(ReelLike.reel_id.in_(rid_list), ReelLike.user_id == me_id)
+        ).scalars().all())
+        return [
+            public_reel(r, authors.get(r.user_id), like_counts.get(r.id, 0), r.id in my_likes)
+            for r in reels
+        ]
+
+
+def toggle_reel_like(reel_id, user_id):
+    with session_scope() as s:
+        existing = s.get(ReelLike, (reel_id, user_id))
+        if existing:
+            s.delete(existing)
+            liked = False
+        else:
+            s.add(ReelLike(reel_id=reel_id, user_id=user_id, created_at=now_utc()))
+            liked = True
+        s.flush()
+        count = s.execute(
+            select(func.count(ReelLike.user_id)).where(ReelLike.reel_id == reel_id)
+        ).scalar_one()
+        return {"liked": liked, "likeCount": int(count or 0)}
+
+
+def delete_reel(reel_id, user_id):
+    """Delete a reel only if it belongs to the user. Returns True if deleted."""
+    with session_scope() as s:
+        r = s.get(Reel, reel_id)
+        if not r or r.user_id != user_id:
+            return False
+        s.delete(r)
+        return True
 
 
 # ---------------------------------------------------------------------------
