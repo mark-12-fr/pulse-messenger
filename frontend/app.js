@@ -1182,7 +1182,15 @@
     updateSeenRow();
     bindVoicePlayers();
     if (stick) {
-      box.scrollTop = box.scrollHeight;
+      // smooth-glide to the new message when we're already near the bottom,
+      // otherwise jump (avoids a long animated scroll from far up)
+      const target = box.scrollHeight;
+      if (target - box.scrollTop - box.clientHeight < 600) {
+        try { box.scrollTo({ top: target, behavior: 'smooth' }); }
+        catch (e) { box.scrollTop = target; }
+      } else {
+        box.scrollTop = target;
+      }
       newSinceScroll = 0;
     } else {
       newSinceScroll += 1;
