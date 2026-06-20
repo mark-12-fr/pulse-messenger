@@ -1102,6 +1102,7 @@ def on_message_send(payload):
         attachment.get("type") if attachment else None,
         attachment.get("name") if attachment else None,
         reply_to_id=reply_to_id,
+        view_once=bool(attachment and attachment.get("viewOnce")),
     )
     db.mark_read(conv["id"], uid, msg["id"])
 
@@ -1275,6 +1276,22 @@ def on_message_delete(payload):
     db.unsend_message(message_id)
     data = {"messageId": message_id, "conversationId": meta["conversationId"]}
     emit_conv(conv, "message:unsent", data)
+    return {"ok": True}
+
+
+@socketio.on("message:view-once")
+def on_message_view_once(payload):
+    """The recipient opened a view-once photo: burn it and tell both sides."""
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    message_id = int(payload.get("messageId") or 0)
+    res = db.consume_view_once(message_id, uid)
+    if not res:
+        return {"error": "Not available."}
+    conv = db.get_conversation_by_id(res["conversationId"])
+    emit_conv(conv, "message:consumed", {"messageId": message_id, "conversationId": res["conversationId"]})
     return {"ok": True}
 
 
