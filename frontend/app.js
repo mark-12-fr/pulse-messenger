@@ -5123,7 +5123,7 @@
       <div class="mm-sheet">
         <div class="settings-title">Add music</div>
         <div class="ms-search"><input id="ms-q" placeholder="Search songs…" autocomplete="off"></div>
-        <div class="ms-results" id="ms-results"><div class="empty-note">Search for a song to add 🎵</div></div>
+        <div class="ms-results" id="ms-results"><div class="empty-note">Loading suggestions…</div></div>
         <div class="mm-actions"><button class="mm-act" data-cancel="1">Cancel</button></div>
       </div>`;
     document.body.appendChild(overlay);
@@ -5131,23 +5131,40 @@
     const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
     const results = overlay.querySelector('#ms-results');
     const input = overlay.querySelector('#ms-q');
+    const renderList = (list, suggested) => {
+      results._list = list;
+      const rows = list.map((s, i) => `
+        <div class="ms-row" data-ms="${i}">
+          ${s.art ? `<img class="ms-art" src="${escapeHtml(s.art)}" alt="">` : '<span class="ms-art">🎵</span>'}
+          <span class="ms-meta"><span class="ms-title">${escapeHtml(s.title)}</span><span class="ms-artist">${escapeHtml(s.artist)}</span></span>
+          <button class="ms-play" data-ms-play="${i}" aria-label="Preview">${IC.play}</button>
+        </div>`).join('');
+      results.innerHTML = list.length
+        ? (suggested ? '<div class="ms-head">Suggested</div>' : '') + rows
+        : '<div class="empty-note">No songs found.</div>';
+    };
+    let recs = null;
+    const showRecs = () => {
+      if (recs && recs.length) renderList(recs, true);
+      else results.innerHTML = '<div class="empty-note">Search for a song 🎵</div>';
+    };
+    (async () => {
+      try {
+        const d = await api('/api/music/search');
+        recs = d.results || [];
+        if (!input.value.trim()) showRecs();
+      } catch (e) { if (!input.value.trim()) results.innerHTML = '<div class="empty-note">Search for a song 🎵</div>'; }
+    })();
     let timer = null;
     input.addEventListener('input', () => {
       clearTimeout(timer);
       const q = input.value.trim();
-      if (!q) { results.innerHTML = `<div class="empty-note">Search for a song to add 🎵</div>`; return; }
+      if (!q) { showRecs(); return; }
       timer = setTimeout(async () => {
         results.innerHTML = `<div class="empty-note">Searching…</div>`;
         try {
           const d = await api('/api/music/search?q=' + encodeURIComponent(q));
-          const list = d.results || [];
-          results._list = list;
-          results.innerHTML = list.length ? list.map((s, i) => `
-            <div class="ms-row" data-ms="${i}">
-              ${s.art ? `<img class="ms-art" src="${escapeHtml(s.art)}" alt="">` : '<span class="ms-art">🎵</span>'}
-              <span class="ms-meta"><span class="ms-title">${escapeHtml(s.title)}</span><span class="ms-artist">${escapeHtml(s.artist)}</span></span>
-              <button class="ms-play" data-ms-play="${i}" aria-label="Preview">${IC.play}</button>
-            </div>`).join('') : `<div class="empty-note">No songs found.</div>`;
+          renderList(d.results || [], false);
         } catch (e) { results.innerHTML = `<div class="empty-note">Couldn't search right now.</div>`; }
       }, 350);
     });

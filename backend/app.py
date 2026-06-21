@@ -41,6 +41,7 @@ elif ASYNC_MODE == "gevent":
 
 import re
 import time
+import random
 import secrets
 import functools
 import ipaddress
@@ -951,25 +952,23 @@ def set_note():
     return jsonify(ok=True)
 
 
-@app.get("/api/music/search")
-@auth_required
-def music_search():
-    """Proxy the free iTunes Search API for 30s song previews (no key needed)."""
-    q = str(request.args.get("q", "")).strip()
-    if not q:
-        return jsonify(results=[])
-    try:
-        r = requests.get(
-            "https://itunes.apple.com/search",
-            params={"term": q, "media": "music", "entity": "song", "limit": 18},
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TeaApp/1.0)"},
-            timeout=8,
-        )
-        data = r.json()
-    except Exception:
-        return jsonify(results=[])
+_MUSIC_SEEDS = [
+    "Taylor Swift", "The Weeknd", "Bruno Mars", "Ed Sheeran", "Billie Eilish",
+    "BTS", "Olivia Rodrigo", "Coldplay", "Dua Lipa", "Adele", "Lady Gaga",
+    "SB19", "Ben&Ben", "Moira Dela Torre", "Arthur Nery", "Juan Karlos",
+    "Sarah Geronimo", "December Avenue", "Cup of Joe", "Bini",
+]
+
+
+def _itunes_songs(term, limit):
+    r = requests.get(
+        "https://itunes.apple.com/search",
+        params={"term": term, "media": "music", "entity": "song", "limit": limit},
+        headers={"User-Agent": "Mozilla/5.0 (compatible; TeaApp/1.0)"},
+        timeout=8,
+    )
     out = []
-    for it in (data.get("results") or []):
+    for it in (r.json().get("results") or []):
         prev = it.get("previewUrl")
         if not prev:
             continue
@@ -980,7 +979,32 @@ def music_search():
             "art": art.replace("100x100bb", "200x200bb") if art else "",
             "url": prev,
         })
-    return jsonify(results=out)
+    return out
+
+
+@app.get("/api/music/search")
+@auth_required
+def music_search():
+    """Proxy the free iTunes Search API for 30s song previews (no key needed).
+    With no query, return a shuffled set of popular suggestions."""
+    q = str(request.args.get("q", "")).strip()
+    if not q:
+        seen, out = set(), []
+        for term in random.sample(_MUSIC_SEEDS, 4):
+            try:
+                for s in _itunes_songs(term, 5):
+                    if s["url"] in seen:
+                        continue
+                    seen.add(s["url"])
+                    out.append(s)
+            except Exception:
+                continue
+        random.shuffle(out)
+        return jsonify(results=out[:18])
+    try:
+        return jsonify(results=_itunes_songs(q, 18))
+    except Exception:
+        return jsonify(results=[])
 
 
 @app.delete("/api/note")
