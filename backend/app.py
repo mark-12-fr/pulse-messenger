@@ -922,16 +922,65 @@ def status_viewers(sid):
     return jsonify(viewers=viewers)
 
 
+def _sanitize_music(m):
+    """Keep only the safe fields of an attached song; require https URLs."""
+    if not isinstance(m, dict):
+        return None
+    url = str(m.get("url") or "")
+    art = str(m.get("art") or "")
+    if not url.startswith("https://"):
+        return None
+    return {
+        "title": str(m.get("title") or "")[:120],
+        "artist": str(m.get("artist") or "")[:120],
+        "art": art[:300] if art.startswith("https://") else "",
+        "url": url[:400],
+    }
+
+
 @app.post("/api/note")
 @auth_required
 def set_note():
     data = request.get_json(silent=True) or {}
     text = str(data.get("text") or "").strip()[:60]
-    if not text:
+    music = _sanitize_music(data.get("music")) if data.get("music") else None
+    if not text and not music:
         db.clear_note(g.user["id"])
         return jsonify(ok=True, cleared=True)
-    db.set_note(g.user["id"], text)
+    db.set_note(g.user["id"], text, music)
     return jsonify(ok=True)
+
+
+@app.get("/api/music/search")
+@auth_required
+def music_search():
+    """Proxy the free iTunes Search API for 30s song previews (no key needed)."""
+    q = str(request.args.get("q", "")).strip()
+    if not q:
+        return jsonify(results=[])
+    try:
+        r = requests.get(
+            "https://itunes.apple.com/search",
+            params={"term": q, "media": "music", "entity": "song", "limit": 18},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TeaApp/1.0)"},
+            timeout=8,
+        )
+        data = r.json()
+    except Exception:
+        return jsonify(results=[])
+    out = []
+    for it in (data.get("results") or []):
+        prev = it.get("previewUrl")
+        if not prev:
+            continue
+        art = it.get("artworkUrl100") or ""
+        out.append({
+            "title": (it.get("trackName") or "")[:120],
+            "artist": (it.get("artistName") or "")[:120],
+            "art": art.replace("100x100bb", "200x200bb") if art else "",
+            "url": prev,
+        })
+    return jsonify(results=out)
 
 
 @app.delete("/api/note")

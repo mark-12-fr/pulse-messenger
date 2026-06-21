@@ -1351,6 +1351,29 @@ html.resume #auth-screen { display: none; }
 .status-bar { align-items: flex-end; }
 .st-note { max-width: 74px; font-size: 10px; line-height: 1.25; background: var(--elev); border: 1px solid var(--line); color: var(--text); padding: 4px 7px; border-radius: 11px; border-bottom-left-radius: 3px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: center; box-shadow: var(--shadow-soft); margin-bottom: -3px; position: relative; z-index: 1; word-break: break-word; }
 .st-note-add { color: var(--text-faint); border-style: dashed; }
+.st-note-music { color: var(--accent); cursor: pointer; }
+.st-note-music.playing { background: var(--accent-grad); color: #fff; border-color: transparent; }
+
+/* note song chip (composer) + music search */
+.note-music-row { margin: 4px 0 14px; }
+.note-music-add { width: 100%; }
+.note-song { display: flex; align-items: center; gap: 10px; background: var(--field); border: 1px solid var(--line); border-radius: 14px; padding: 8px 10px; }
+.note-song-art { width: 44px; height: 44px; min-width: 44px; border-radius: 8px; object-fit: cover; background: var(--hover); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+.note-song-meta { flex: 1; min-width: 0; }
+.note-song-title { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-song-artist { font-size: 12.5px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-song-play, .note-song-x { border: none; background: var(--hover); color: var(--text); width: 34px; min-width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.note-song-play { background: var(--accent-grad); color: #fff; }
+.ms-search { padding: 0 0 8px; }
+.ms-search input { width: 100%; border: 1.5px solid var(--line); border-radius: 22px; padding: 11px 16px; background: var(--field); color: var(--text); outline: none; font-size: 15px; }
+.ms-results { background: var(--elev); border: 1px solid var(--line); border-radius: 16px; padding: 6px; max-height: 46vh; overflow-y: auto; box-shadow: var(--shadow); }
+.ms-row { display: flex; align-items: center; gap: 10px; width: 100%; border: none; background: transparent; color: var(--text); padding: 8px; border-radius: 11px; cursor: pointer; text-align: left; }
+.ms-row:active, .ms-row.playing { background: var(--hover); }
+.ms-art { width: 42px; height: 42px; min-width: 42px; border-radius: 8px; object-fit: cover; background: var(--hover); display: flex; align-items: center; justify-content: center; font-size: 19px; }
+.ms-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ms-title { font-weight: 650; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-artist { font-size: 12.5px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-play { border: none; background: var(--accent-grad); color: #fff; width: 34px; min-width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
 /* story reactions */
 .story-react { position: absolute; left: 0; right: 0; bottom: calc(18px + var(--safe-bottom)); display: flex; align-items: center; justify-content: center; gap: 9px; z-index: 5; padding: 0 14px; flex-wrap: wrap; }

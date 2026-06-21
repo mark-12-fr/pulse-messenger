@@ -265,6 +265,7 @@ class Note(Base):
     __tablename__ = "notes"
     user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     text = mapped_column(Text, nullable=False)
+    music = mapped_column(Text, nullable=True)   # JSON: {title, artist, art, url}
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -1616,7 +1617,13 @@ def status_feed(me_id):
             g = groups.setdefault(uid, {"user": authors.get(uid), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
             n = notes.get(uid)
             if n:
-                g["note"] = {"text": n.text, "createdAt": _iso(n.created_at)}
+                music = None
+                if n.music:
+                    try:
+                        music = json.loads(n.music)
+                    except Exception:
+                        music = None
+                g["note"] = {"text": n.text, "music": music, "createdAt": _iso(n.created_at)}
                 if not g["_latest"]:
                     g["_latest"] = _iso(n.created_at)
         result = [g for g in groups.values() if g["user"]]
@@ -1643,15 +1650,17 @@ def delete_status(status_id, user_id):
         return True
 
 
-def set_note(user_id, text):
-    """Set (or replace) the user's 24h note."""
+def set_note(user_id, text, music=None):
+    """Set (or replace) the user's 24h note (optional attached song)."""
+    music_json = json.dumps(music) if music else None
     with session_scope() as s:
         n = s.get(Note, user_id)
         if n:
             n.text = text
+            n.music = music_json
             n.created_at = now_utc()
         else:
-            s.add(Note(user_id=user_id, text=text, created_at=now_utc()))
+            s.add(Note(user_id=user_id, text=text, music=music_json, created_at=now_utc()))
 
 
 def clear_note(user_id):

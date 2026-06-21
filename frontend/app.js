@@ -4882,7 +4882,15 @@
     const feed = state.statusFeed || [];
     const meGroup = feed.find((g) => g.user && g.user.id === state.me.id);
     const others = feed.filter((g) => g.user && g.user.id !== state.me.id);
-    const note = (g) => (g && g.note && g.note.text) ? `<span class="st-note">${escapeHtml(g.note.text)}</span>` : '';
+    const note = (g) => {
+      if (!g || !g.note) return '';
+      const n = g.note;
+      if (n.music && n.music.url) {
+        const label = n.text || n.music.title || 'Music';
+        return `<span class="st-note st-note-music" data-note-music="${encodeURIComponent(n.music.url)}">🎵 ${escapeHtml(label)}</span>`;
+      }
+      return n.text ? `<span class="st-note">${escapeHtml(n.text)}</span>` : '';
+    };
     const hasStory = (g) => !!(g && g.statuses && g.statuses.length);
     let html = `<button class="st-item" data-st-mine>
         ${note(meGroup) || '<span class="st-note st-note-add">Note</span>'}
@@ -5042,6 +5050,8 @@
     const bar = document.getElementById('status-bar');
     if (!bar) return;
     bar.addEventListener('click', (e) => {
+      const mus = e.target.closest('[data-note-music]');
+      if (mus) { e.stopPropagation(); playNotePreview(decodeURIComponent(mus.dataset.noteMusic), mus); return; }
       if (e.target.closest('[data-st-mine]')) { openAddStatusMenu(); return; }
       const open = e.target.closest('[data-st-open]');
       if (open) {
@@ -5085,37 +5095,123 @@
     });
   }
 
+  // ---- note song preview (30s clips from the iTunes proxy) ----
+  let _notePreview = null;
+  function ensureNotePreview() {
+    if (!_notePreview) {
+      _notePreview = new Audio();
+      const clr = () => document.querySelectorAll('.st-note-music.playing,.ms-row.playing').forEach((x) => x.classList.remove('playing'));
+      _notePreview.addEventListener('ended', clr);
+      _notePreview.addEventListener('pause', clr);
+    }
+    return _notePreview;
+  }
+  function playNotePreview(url, el) {
+    if (!url) return;
+    const a = ensureNotePreview();
+    if (a._url === url && !a.paused) { a.pause(); return; }
+    document.querySelectorAll('.st-note-music.playing,.ms-row.playing').forEach((x) => x.classList.remove('playing'));
+    a._url = url; a.src = url;
+    a.play().then(() => { if (el) el.classList.add('playing'); }).catch(() => {});
+  }
+  function stopNotePreview() { if (_notePreview) { _notePreview.pause(); _notePreview._url = null; } }
+
+  function openMusicSearch(onPick) {
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu music-search';
+    overlay.innerHTML = `
+      <div class="mm-sheet">
+        <div class="settings-title">Add music</div>
+        <div class="ms-search"><input id="ms-q" placeholder="Search songs…" autocomplete="off"></div>
+        <div class="ms-results" id="ms-results"><div class="empty-note">Search for a song to add 🎵</div></div>
+        <div class="mm-actions"><button class="mm-act" data-cancel="1">Cancel</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    const results = overlay.querySelector('#ms-results');
+    const input = overlay.querySelector('#ms-q');
+    let timer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      const q = input.value.trim();
+      if (!q) { results.innerHTML = `<div class="empty-note">Search for a song to add 🎵</div>`; return; }
+      timer = setTimeout(async () => {
+        results.innerHTML = `<div class="empty-note">Searching…</div>`;
+        try {
+          const d = await api('/api/music/search?q=' + encodeURIComponent(q));
+          const list = d.results || [];
+          results._list = list;
+          results.innerHTML = list.length ? list.map((s, i) => `
+            <div class="ms-row" data-ms="${i}">
+              ${s.art ? `<img class="ms-art" src="${escapeHtml(s.art)}" alt="">` : '<span class="ms-art">🎵</span>'}
+              <span class="ms-meta"><span class="ms-title">${escapeHtml(s.title)}</span><span class="ms-artist">${escapeHtml(s.artist)}</span></span>
+              <button class="ms-play" data-ms-play="${i}" aria-label="Preview">${IC.play}</button>
+            </div>`).join('') : `<div class="empty-note">No songs found.</div>`;
+        } catch (e) { results.innerHTML = `<div class="empty-note">Couldn't search right now.</div>`; }
+      }, 350);
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target.closest('[data-cancel]') || e.target === overlay) return close();
+      const play = e.target.closest('[data-ms-play]');
+      if (play) { e.stopPropagation(); const s = (results._list || [])[Number(play.dataset.msPlay)]; if (s) playNotePreview(s.url, play.closest('.ms-row')); return; }
+      const row = e.target.closest('[data-ms]');
+      if (row) { const s = (results._list || [])[Number(row.dataset.ms)]; if (s) { stopNotePreview(); onPick(s); close(); } return; }
+    });
+    setTimeout(() => input.focus(), 250);
+  }
+
   function openNoteComposer() {
     const myGroup = (state.statusFeed || []).find((g) => g.user && g.user.id === state.me.id);
-    const cur = myGroup && myGroup.note ? myGroup.note.text : '';
+    const curNote = myGroup && myGroup.note ? myGroup.note : null;
+    const curText = curNote ? (curNote.text || '') : '';
+    let selectedMusic = curNote && curNote.music ? curNote.music : null;
     const overlay = document.createElement('div');
     overlay.className = 'modal';
     overlay.innerHTML = `
       <div class="modal-card">
         <h3>Share a note</h3>
         <p class="confirm-text" style="margin-bottom:12px">A short note shown by your avatar for 24 hours.</p>
-        <div class="field"><input id="note-text" maxlength="60" placeholder="What's on your mind?" value="${escapeHtml(cur)}"></div>
-        <div class="modal-actions">
-          ${cur ? `<button class="btn-soft" id="note-clear">Clear</button>` : `<button class="btn-soft" data-cancel="1">Cancel</button>`}
-          <button class="btn-primary" id="note-save">Share</button>
-        </div>
+        <div class="field"><input id="note-text" maxlength="60" placeholder="What's on your mind?" value="${escapeHtml(curText)}"></div>
+        <div class="note-music-row" id="note-music-row"></div>
+        <div class="modal-actions" id="note-actions"></div>
       </div>`;
     document.body.appendChild(overlay);
+    const musicRow = overlay.querySelector('#note-music-row');
+    const actions = overlay.querySelector('#note-actions');
+    const renderMusic = () => {
+      musicRow.innerHTML = selectedMusic
+        ? `<div class="note-song">
+             ${selectedMusic.art ? `<img class="note-song-art" src="${escapeHtml(selectedMusic.art)}" alt="">` : '<span class="note-song-art">🎵</span>'}
+             <div class="note-song-meta"><div class="note-song-title">${escapeHtml(selectedMusic.title)}</div><div class="note-song-artist">${escapeHtml(selectedMusic.artist)}</div></div>
+             <button class="note-song-play" id="note-song-play" aria-label="Preview">${IC.play}</button>
+             <button class="note-song-x" id="note-song-x" aria-label="Remove song">✕</button>
+           </div>`
+        : `<button class="btn-soft note-music-add" id="note-music-add">🎵 Add music</button>`;
+      actions.innerHTML =
+        `${(curText || selectedMusic) ? `<button class="btn-soft" id="note-clear">Clear</button>` : `<button class="btn-soft" data-cancel="1">Cancel</button>`}` +
+        `<button class="btn-primary" id="note-save">Share</button>`;
+    };
+    renderMusic();
     requestAnimationFrame(() => overlay.classList.add('show'));
     setTimeout(() => { const i = overlay.querySelector('#note-text'); if (i) i.focus(); }, 100);
-    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
     overlay.addEventListener('click', async (e) => {
       if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('#note-music-add')) { openMusicSearch((song) => { selectedMusic = song; renderMusic(); }); return; }
+      if (e.target.closest('#note-song-x')) { stopNotePreview(); selectedMusic = null; renderMusic(); return; }
+      if (e.target.closest('#note-song-play')) { playNotePreview(selectedMusic && selectedMusic.url); return; }
       if (e.target.closest('#note-clear')) {
         try { await api('/api/note', { method: 'DELETE' }); close(); await loadStatusFeed(); toast('✅', 'Cleared', 'Note removed'); } catch (e2) { toast('⚠️', 'Error', e2.message); }
         return;
       }
       if (e.target.closest('#note-save')) {
         const text = overlay.querySelector('#note-text').value.trim();
+        if (!text && !selectedMusic) { toast('⚠️', 'Empty note', 'Add a note or a song first.'); return; }
         try {
-          await api('/api/note', { method: 'POST', body: { text } });
+          await api('/api/note', { method: 'POST', body: { text, music: selectedMusic } });
           close(); await loadStatusFeed();
-          toast('✅', text ? 'Shared' : 'Cleared', text ? 'Note shared for 24h' : 'Note removed');
+          toast('✅', 'Shared', 'Note shared for 24h');
         } catch (e2) { toast('⚠️', 'Error', e2.message); }
       }
     });
