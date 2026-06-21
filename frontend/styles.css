@@ -1365,6 +1365,15 @@ html.resume #auth-screen { display: none; }
 .st-note-music .eq i { width: 2px; }
 @media (prefers-reduced-motion: reduce) { .eq i { animation: none; height: 8px; } }
 
+/* chat effects (confetti / hearts / balloons on fun messages) */
+.fx-layer { position: fixed; inset: 0; z-index: 385; pointer-events: none; overflow: hidden; }
+.fx { position: absolute; top: -12%; will-change: transform, opacity; opacity: 0; }
+.fx-fall { animation-name: fxFall; animation-timing-function: ease-in; animation-fill-mode: forwards; }
+.fx-rise { top: auto; bottom: -12%; animation-name: fxRise; animation-timing-function: ease-out; animation-fill-mode: forwards; }
+@keyframes fxFall { 0% { transform: translateY(0) rotate(0); opacity: 0; } 10% { opacity: 1; } 100% { transform: translateY(122vh) rotate(var(--rot, 40deg)); opacity: 1; } }
+@keyframes fxRise { 0% { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-122vh) scale(1.1) rotate(var(--rot, 30deg)); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fx-layer { display: none; } }
+
 /* note composer (Messenger-style) */
 .music-search { z-index: 340; }   /* must sit above the note composer modal (320) */
 .note-card { text-align: center; }
