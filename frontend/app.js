@@ -2799,6 +2799,7 @@
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-pin-msg="1">${state.pinned && state.pinned.id === m.id ? 'Unpin' : 'Pin'}</button>` : ''}
           ${mine && m.body ? `<button class="mm-act" data-edit="1">Edit</button>` : ''}
           ${m.body ? `<button class="mm-act" data-copy="1">Copy text</button>` : ''}
+          ${(state.current && state.current.isGroup && mine) ? `<button class="mm-act" data-seen="1">Seen by</button>` : ''}
           <button class="mm-act" data-select="1">Select</button>
           ${mine ? `<button class="mm-act danger" data-unsend="1">Unsend</button>` : ''}
           <button class="mm-act" data-cancel="1">Cancel</button>
@@ -2826,6 +2827,7 @@
         try { navigator.clipboard.writeText(m.body || ''); toast('📋', 'Copied', 'Message copied'); } catch (_) {}
         return close();
       }
+      if (e.target.closest('[data-seen]')) { close(); openSeenBy(mid); return; }
       if (e.target.closest('[data-select]')) { close(); enterSelect(mid); return; }
       if (e.target.closest('[data-cancel]')) return close();
       // backdrop tap — ignore the trailing tap that opened the sheet
@@ -3869,16 +3871,20 @@
 
   function openGroupMembers(group) {
     const members = group.members || [];
+    const cid = group.id;
+    const iAmOwner = group.ownerId === state.me.id;
     const overlay = document.createElement('div');
     overlay.className = 'msg-menu';
     overlay.innerHTML = `
       <div class="mm-sheet">
-        <div class="settings-title">Members</div>
+        <div class="settings-title">Group info</div>
+        ${(group.description || iAmOwner) ? `<div class="gi-desc">${group.description ? escapeHtml(group.description) : '<span class="gi-desc-empty">No description yet</span>'}${iAmOwner ? `<button class="gi-edit" data-desc-edit>Edit</button>` : ''}</div>` : ''}
         <div class="fwd-list">
           ${members.map((u) => `
             <div class="fwd-row">
               ${avatarHtml(u)}
               <span class="fwd-name">${escapeHtml(u.displayName)}${u.id === state.me.id ? ' (you)' : ''}${u.id === group.ownerId ? ' · admin' : ''}</span>
+              ${(iAmOwner && u.id !== state.me.id && u.id !== group.ownerId) ? `<button class="gi-mact" data-make-admin="${u.id}" title="Make admin" aria-label="Make admin">★</button><button class="gi-mact danger" data-remove="${u.id}" title="Remove" aria-label="Remove">✕</button>` : ''}
             </div>`).join('')}
         </div>
         <div class="mm-actions"><button class="mm-act" data-cancel="1">Close</button></div>
@@ -3886,7 +3892,66 @@
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', async (e) => {
+      if (e.target.closest('[data-cancel]') || e.target === overlay) return close();
+      if (e.target.closest('[data-desc-edit]')) { close(); openGroupDescription(cid, group); return; }
+      const rm = e.target.closest('[data-remove]');
+      if (rm) {
+        const uid = Number(rm.dataset.remove);
+        const u = members.find((x) => x.id === uid);
+        if (!confirm('Remove ' + (u ? u.displayName : 'this member') + ' from the group?')) return;
+        try { const r = await api('/api/groups/' + cid + '/members/' + uid + '/remove', { method: 'POST' }); if (r.group) Object.assign(group, r.group); close(); toast('✅', 'Removed', (u ? u.displayName : 'Member') + ' removed'); } catch (er) { toast('⚠️', 'Error', er.message); }
+        return;
+      }
+      const ma = e.target.closest('[data-make-admin]');
+      if (ma) {
+        const uid = Number(ma.dataset.makeAdmin);
+        const u = members.find((x) => x.id === uid);
+        if (!confirm('Make ' + (u ? u.displayName : 'this member') + ' the admin? You will no longer be admin.')) return;
+        try { const r = await api('/api/groups/' + cid + '/transfer', { method: 'POST', body: { userId: uid } }); if (r.group) Object.assign(group, r.group); close(); toast('✅', 'Admin changed', (u ? u.displayName : 'They') + ' is now the admin'); } catch (er) { toast('⚠️', 'Error', er.message); }
+        return;
+      }
+    });
+  }
+
+  function openGroupDescription(cid, group) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>Group description</h3>
+        <div class="field"><textarea id="gd-text" maxlength="300" rows="4" placeholder="What's this group about?">${escapeHtml(group.description || '')}</textarea></div>
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Cancel</button>
+          <button class="btn-primary" id="gd-save">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
+    overlay.querySelector('#gd-save').addEventListener('click', async () => {
+      const description = overlay.querySelector('#gd-text').value.trim();
+      try { await api('/api/groups/' + cid + '/description', { method: 'POST', body: { description } }); group.description = description; close(); toast('✅', 'Saved', 'Group description updated'); } catch (er) { toast('⚠️', 'Error', er.message); }
+    });
+  }
+
+  async function openSeenBy(mid) {
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `<div class="mm-sheet"><div class="settings-title">Seen by</div><div class="fwd-list" id="seen-list"><div class="empty-note">Loading…</div></div><div class="mm-actions"><button class="mm-act" data-cancel="1">Close</button></div></div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-cancel]') || e.target === overlay) close(); });
+    try {
+      const d = await api('/api/messages/' + mid + '/seen');
+      const list = d.seenBy || [];
+      const el = overlay.querySelector('#seen-list');
+      el.innerHTML = list.length
+        ? list.map((u) => `<div class="fwd-row">${avatarHtml(u)}<span class="fwd-name">${escapeHtml(u.displayName)}</span></div>`).join('')
+        : '<div class="empty-note">No one has seen this yet.</div>';
+    } catch (e) { const el = overlay.querySelector('#seen-list'); if (el) el.innerHTML = '<div class="empty-note">Couldn\'t load.</div>'; }
   }
 
   function openRenameGroup(cid, group) {
