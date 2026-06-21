@@ -1513,7 +1513,12 @@
 
   function sendMessage() {
     if (!state.current) return;
-    const body = msgInput.value.trim();
+    let body = msgInput.value.trim();
+    // private reply: prepend the quoted group message so the context comes along
+    // (state.privateQuote is cleared by cancelReply() at the end of a real send)
+    if (state.privateQuote && !state.editing && body) {
+      body = '↩️ "' + state.privateQuote.text + '"\n' + body;
+    }
     if (state.editing) {
       if (!body) return;
       const mid = state.editing;
@@ -2701,8 +2706,25 @@
   }
   function cancelReply() {
     state.replyTo = null;
+    state.privateQuote = null;
     const rb = $('#reply-bar');
     if (rb) rb.classList.add('hidden');
+  }
+
+  // Reply privately: jump to a DM with the group sender, quoting their message.
+  function replyPrivately(m) {
+    const sender = msgSenderUser(m);
+    if (!sender || sender.id === state.me.id) return;
+    if (!state.friends.has(sender.id)) { toast('⚠️', 'Not a friend', 'You can only reply privately to your friends.'); return; }
+    const name = friendName(state.friends.get(sender.id)) || sender.displayName || 'them';
+    const quote = (msgPreviewShort(m) || '').slice(0, 80);
+    openConversationByPeer(sender.id);   // its synchronous setup clears the reply bar first…
+    state.replyTo = null;
+    state.privateQuote = { name, text: quote };   // …then we set the private-quote context
+    $('#reply-bar-label').textContent = 'Private reply';
+    $('#reply-bar-text').textContent = quote;
+    $('#reply-bar').classList.remove('hidden');
+    setTimeout(() => msgInput.focus(), 220);
   }
   const replyCancelBtn = $('#reply-cancel');
   if (replyCancelBtn) replyCancelBtn.addEventListener('click', () => { if (state.editing) cancelEdit(); else cancelReply(); });
@@ -2772,6 +2794,7 @@
         </div>
         <div class="mm-actions">
           <button class="mm-act" data-reply="1">Reply</button>
+          ${(state.current && state.current.isGroup && !mine) ? `<button class="mm-act" data-reply-private="1">Reply privately</button>` : ''}
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-forward="1">Forward</button>` : ''}
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-pin-msg="1">${state.pinned && state.pinned.id === m.id ? 'Unpin' : 'Pin'}</button>` : ''}
           ${mine && m.body ? `<button class="mm-act" data-edit="1">Edit</button>` : ''}
@@ -2790,6 +2813,7 @@
       if (react) { reactToMessage(mid, react.dataset.react); return close(); }
       if (e.target.closest('[data-emoji-more]')) { close(); openEmojiPicker(mid); return; }
       if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
+      if (e.target.closest('[data-reply-private]')) { close(); replyPrivately(m); return; }
       if (e.target.closest('[data-forward]')) { close(); openForward(m); return; }
       if (e.target.closest('[data-pin-msg]')) {
         const isPinned = state.pinned && state.pinned.id === mid;
