@@ -3437,9 +3437,14 @@
     return ringtoneEl;
   }
   function primeRingtone() {
-    const el = ensureRingtoneEl(); if (!el) return;
-    el.muted = true;
-    el.play().then(() => { el.pause(); el.currentTime = 0; el.muted = false; }).catch(() => { el.muted = false; });
+    const el = ensureRingtoneEl(); if (!el || el._primed) return;
+    el._primed = true;
+    // Unlock the element for later autoplay — must be SILENT (muted alone isn't
+    // reliable on iOS, so force volume 0 too), then stop and restore.
+    el.muted = true; el.volume = 0;
+    const restore = () => { el.pause(); el.currentTime = 0; el.muted = false; el.volume = 1; };
+    const p = el.play();
+    if (p && p.then) p.then(restore).catch(restore); else restore();
   }
 
   // ---- call tones (generated with Web Audio — no asset, works offline) ----
@@ -5223,11 +5228,13 @@
     const bar = document.getElementById('status-bar');
     if (!bar) return;
     bar.addEventListener('click', (e) => {
-      // tap a friend's note bubble → open the FULL note (so long text is readable)
+      // tap a note bubble (yours OR a friend's) → open the full note (reads long
+      // text + auto-plays the song if it has music)
       const noteEl = e.target.closest('.st-note');
-      const openItem = e.target.closest('[data-st-open]');
-      if (noteEl && !noteEl.classList.contains('st-note-add') && openItem) {
-        const g = (state.statusFeed || []).find((x) => x.user && x.user.id === Number(openItem.dataset.stOpen));
+      if (noteEl && !noteEl.classList.contains('st-note-add')) {
+        const openItem = e.target.closest('[data-st-open]');
+        const uid = openItem ? Number(openItem.dataset.stOpen) : (e.target.closest('[data-st-mine]') ? state.me.id : 0);
+        const g = uid ? (state.statusFeed || []).find((x) => x.user && x.user.id === uid) : null;
         if (g && g.note) { e.stopPropagation(); openNoteView(g); return; }
       }
       if (e.target.closest('[data-st-mine]')) { openAddStatusMenu(); return; }
@@ -5268,6 +5275,8 @@
       if (e.target.closest('[data-nv-edit]')) { close(); openNoteComposer(); return; }
       if (e.target.closest('[data-nv-msg]')) { close(); openConversationByPeer(group.user.id); return; }
     });
+    // tapping a music note should start playing the song right away
+    if (n.music && n.music.url) playNotePreview(n.music.url, overlay.querySelector('.nv-song'));
   }
 
   function openAddStatusMenu() {
