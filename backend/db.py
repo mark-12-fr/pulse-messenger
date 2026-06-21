@@ -101,6 +101,7 @@ class Conversation(Base):
     user_b = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # larger id (1-to-1 only)
     is_group = mapped_column(Boolean, nullable=False, default=False)
     name = mapped_column(Text, nullable=True)            # group name
+    description = mapped_column(Text, nullable=True)      # group description
     avatar_url = mapped_column(Text, nullable=True)      # group photo
     avatar_color = mapped_column(String(16), nullable=True)
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -673,6 +674,7 @@ def _conv_dict(c):
     return {
         "id": c.id, "user_a": c.user_a, "user_b": c.user_b,
         "is_group": bool(c.is_group), "name": c.name,
+        "description": c.description,
         "avatar_url": c.avatar_url, "avatar_color": c.avatar_color,
         "owner_id": c.owner_id, "created_at": _iso(c.created_at),
     }
@@ -783,7 +785,7 @@ def remove_group_member(conversation_id, user_id):
         ))
 
 
-def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False):
+def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False, description=None):
     with session_scope() as s:
         c = s.get(Conversation, conversation_id)
         if not c or not c.is_group:
@@ -792,8 +794,45 @@ def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False):
             c.name = name.strip()[:60] or c.name
         if set_avatar:
             c.avatar_url = avatar_url or None
+        if description is not None:
+            c.description = description.strip()[:300] or None
         s.flush()
         return _conv_dict(c)
+
+
+def set_group_owner(conversation_id, new_owner_id):
+    """Transfer admin to another member (must already be a member)."""
+    with session_scope() as s:
+        c = s.get(Conversation, conversation_id)
+        if not c or not c.is_group:
+            return False
+        m = s.execute(select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == new_owner_id,
+        )).scalar_one_or_none()
+        if not m:
+            return False
+        c.owner_id = new_owner_id
+        return True
+
+
+def message_seen_by(message_id):
+    """Group members (excluding the sender) who have read up to this message."""
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m:
+            return None
+        reads = s.execute(
+            select(MessageRead.user_id).where(
+                MessageRead.conversation_id == m.conversation_id,
+                MessageRead.last_read_message_id >= message_id,
+                MessageRead.user_id != m.sender_id,
+            )
+        ).scalars().all()
+        if not reads:
+            return []
+        users = s.execute(select(User).where(User.id.in_(reads))).scalars().all()
+        return [public_user(u) for u in users]
 
 
 def public_conversation_meta(conv, me_id):
@@ -805,6 +844,7 @@ def public_conversation_meta(conv, me_id):
         "id": conv["id"],
         "isGroup": True,
         "name": conv["name"],
+        "description": conv.get("description"),
         "avatarUrl": conv["avatar_url"],
         "avatarColor": conv["avatar_color"] or "#0a7cff",
         "ownerId": conv["owner_id"],

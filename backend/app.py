@@ -760,6 +760,76 @@ def leave_group(cid):
     return jsonify(ok=True)
 
 
+def _group_owner_required(cid, me_id):
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, me_id):
+        return None, (jsonify(error="Group not found."), 404)
+    if conv.get("owner_id") != me_id:
+        return None, (jsonify(error="Only the group admin can do that."), 403)
+    return conv, None
+
+
+@app.post("/api/groups/<int:cid>/description")
+@auth_required
+def group_description(cid):
+    me_id = g.user["id"]
+    conv, err = _group_owner_required(cid, me_id)
+    if err:
+        return err
+    desc = str((request.get_json(silent=True) or {}).get("description") or "")
+    db.update_group(cid, description=desc)
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    return jsonify(ok=True, group=meta)
+
+
+@app.post("/api/groups/<int:cid>/members/<int:uid>/remove")
+@auth_required
+def remove_group_member_route(cid, uid):
+    me_id = g.user["id"]
+    conv, err = _group_owner_required(cid, me_id)
+    if err:
+        return err
+    if uid == me_id:
+        return jsonify(error="Use Leave group instead."), 400
+    db.remove_group_member(cid, uid)
+    emit_to_user(uid, "group:removed", {"conversationId": cid})
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    return jsonify(ok=True, group=meta)
+
+
+@app.post("/api/groups/<int:cid>/transfer")
+@auth_required
+def transfer_group_admin(cid):
+    me_id = g.user["id"]
+    conv, err = _group_owner_required(cid, me_id)
+    if err:
+        return err
+    new_owner = int((request.get_json(silent=True) or {}).get("userId") or 0)
+    if not db.set_group_owner(cid, new_owner):
+        return jsonify(error="That person isn't in the group."), 400
+    conv = db.get_conversation_by_id(cid)
+    meta = db.public_conversation_meta(conv, me_id)
+    emit_conv(conv, "group:updated", {"group": meta})
+    return jsonify(ok=True, group=meta)
+
+
+@app.get("/api/messages/<int:mid>/seen")
+@auth_required
+def message_seen(mid):
+    me_id = g.user["id"]
+    meta = db.get_message_meta(mid)
+    if not meta:
+        return jsonify(error="Message not found."), 404
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    if not conv or not conv.get("is_group") or not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Not allowed."), 404
+    return jsonify(seenBy=db.message_seen_by(mid) or [])
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
