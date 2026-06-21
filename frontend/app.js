@@ -4929,7 +4929,7 @@
       const n = g.note;
       if (n.music && n.music.url) {
         const label = n.text || n.music.title || 'Music';
-        return `<span class="st-note st-note-music" data-note-music="${encodeURIComponent(n.music.url)}">🎵 ${escapeHtml(label)}</span>`;
+        return `<span class="st-note st-note-music" data-note-music="${encodeURIComponent(n.music.url)}">${EQ}${escapeHtml(label)}</span>`;
       }
       return n.text ? `<span class="st-note">${escapeHtml(n.text)}</span>` : '';
     };
@@ -5158,6 +5158,9 @@
   }
   function stopNotePreview() { if (_notePreview) { _notePreview.pause(); _notePreview._url = null; } }
 
+  // animated equalizer bars — shown on notes that have a song (Messenger-style)
+  const EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
+
   function openMusicSearch(onPick) {
     const overlay = document.createElement('div');
     overlay.className = 'msg-menu music-search';
@@ -5246,10 +5249,16 @@
     const input = overlay.querySelector('#note-text');
     const updateBubble = () => {
       const v = (input.value || '').trim();
-      const m = selectedMusic ? ('🎵 ' + selectedMusic.title) : '';
-      const show = v || m;
-      bubble.textContent = show || "What's on your mind?";
-      bubble.classList.toggle('empty', !show);
+      if (selectedMusic) {
+        bubble.innerHTML = EQ + escapeHtml(v || selectedMusic.title);
+        bubble.classList.remove('empty');
+      } else if (v) {
+        bubble.textContent = v;
+        bubble.classList.remove('empty');
+      } else {
+        bubble.textContent = "What's on your mind?";
+        bubble.classList.add('empty');
+      }
     };
     const renderMusic = () => {
       musicRow.innerHTML = selectedMusic
