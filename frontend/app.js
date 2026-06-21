@@ -1485,13 +1485,10 @@
     if (!body && !state.attachment) return;
 
     const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    const att = state.attachment
-      ? { ...state.attachment, viewOnce: !!(state.attachmentViewOnce && state.attachment.type === 'image') }
-      : null;
     const payload = {
       ...sendTarget(),
       body,
-      attachment: att,
+      attachment: state.attachment,
       replyToId: state.replyTo ? state.replyTo.id : null,
       clientId,
     };
@@ -1901,22 +1898,15 @@
     if (isImg && localUrl) thumb = `<img src="${localUrl}">`;
     else if (isVid && localUrl) thumb = `<video src="${localUrl}" muted></video>`;
     box.className = 'attach-preview' + (uploading ? ' uploading' : '');
-    const vonce = isImg ? `<button class="ap-vonce ${state.attachmentViewOnce ? 'on' : ''}" id="ap-vonce" title="View once" aria-label="View once">👁️</button>` : '';
     box.innerHTML = `
       ${thumb}
       <div class="ap-meta">
         <div class="ap-name">${escapeHtml(name)}</div>
-        <div class="ap-sub">${isImg && state.attachmentViewOnce ? 'View once · ' : ''}${fmtSize(size)}</div>
+        <div class="ap-sub">${fmtSize(size)}</div>
       </div>
-      ${vonce}
       <button class="ap-remove" id="ap-remove" aria-label="Remove">✕</button>`;
     box.classList.remove('hidden');
     $('#ap-remove').addEventListener('click', clearAttachment);
-    const vb = document.getElementById('ap-vonce');
-    if (vb) vb.addEventListener('click', () => {
-      state.attachmentViewOnce = !state.attachmentViewOnce;
-      showAttachPreview({ name, size, localUrl, isImg, isVid, uploading });
-    });
   }
   function clearAttachment() {
     state.attachment = null;
@@ -5236,18 +5226,31 @@
     const curText = curNote ? (curNote.text || '') : '';
     let selectedMusic = curNote && curNote.music ? curNote.music : null;
     const overlay = document.createElement('div');
-    overlay.className = 'modal';
+    overlay.className = 'modal note-modal';
     overlay.innerHTML = `
-      <div class="modal-card">
-        <h3>Share a note</h3>
-        <p class="confirm-text" style="margin-bottom:12px">A short note shown by your avatar for 24 hours.</p>
-        <div class="field"><input id="note-text" maxlength="60" placeholder="What's on your mind?" value="${escapeHtml(curText)}"></div>
+      <div class="modal-card note-card">
+        <div class="note-head">Share a note</div>
+        <div class="note-preview">
+          <div class="note-bubble" id="note-bubble"></div>
+          ${avatarHtml(state.me, { cls: 'note-av' })}
+        </div>
+        <div class="note-field"><input id="note-text" maxlength="60" placeholder="Type a note…" value="${escapeHtml(curText)}"></div>
         <div class="note-music-row" id="note-music-row"></div>
         <div class="modal-actions" id="note-actions"></div>
+        <p class="note-foot">Shown by your avatar for 24 hours</p>
       </div>`;
     document.body.appendChild(overlay);
     const musicRow = overlay.querySelector('#note-music-row');
     const actions = overlay.querySelector('#note-actions');
+    const bubble = overlay.querySelector('#note-bubble');
+    const input = overlay.querySelector('#note-text');
+    const updateBubble = () => {
+      const v = (input.value || '').trim();
+      const m = selectedMusic ? ('🎵 ' + selectedMusic.title) : '';
+      const show = v || m;
+      bubble.textContent = show || "What's on your mind?";
+      bubble.classList.toggle('empty', !show);
+    };
     const renderMusic = () => {
       musicRow.innerHTML = selectedMusic
         ? `<div class="note-song">
@@ -5260,10 +5263,12 @@
       actions.innerHTML =
         `${(curText || selectedMusic) ? `<button class="btn-soft" id="note-clear">Clear</button>` : `<button class="btn-soft" data-cancel="1">Cancel</button>`}` +
         `<button class="btn-primary" id="note-save">Share</button>`;
+      updateBubble();
     };
     renderMusic();
+    input.addEventListener('input', updateBubble);
     requestAnimationFrame(() => overlay.classList.add('show'));
-    setTimeout(() => { const i = overlay.querySelector('#note-text'); if (i) i.focus(); }, 100);
+    setTimeout(() => input.focus(), 120);
     const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
     overlay.addEventListener('click', async (e) => {
       if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
@@ -5275,7 +5280,7 @@
         return;
       }
       if (e.target.closest('#note-save')) {
-        const text = overlay.querySelector('#note-text').value.trim();
+        const text = input.value.trim();
         if (!text && !selectedMusic) { toast('⚠️', 'Empty note', 'Add a note or a song first.'); return; }
         try {
           await api('/api/note', { method: 'POST', body: { text, music: selectedMusic } });
