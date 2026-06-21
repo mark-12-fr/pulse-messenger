@@ -10,9 +10,8 @@ from both HTTP request handlers and Socket.IO event handlers.
 """
 
 import os
-import json
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     create_engine, select, or_, and_, func, delete,
@@ -80,8 +79,6 @@ class User(Base):
     token_version = mapped_column(Integer, nullable=False, default=0)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
-    hide_last_seen = mapped_column(Boolean, nullable=False, default=False)
-    hide_read_receipts = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Friendship(Base):
@@ -101,7 +98,6 @@ class Conversation(Base):
     user_b = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # larger id (1-to-1 only)
     is_group = mapped_column(Boolean, nullable=False, default=False)
     name = mapped_column(Text, nullable=True)            # group name
-    description = mapped_column(Text, nullable=True)      # group description
     avatar_url = mapped_column(Text, nullable=True)      # group photo
     avatar_color = mapped_column(String(16), nullable=True)
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -128,8 +124,6 @@ class Message(Base):
     attachment_name = mapped_column(Text, nullable=True)
     unsent = mapped_column(Boolean, nullable=False, default=False)
     edited = mapped_column(Boolean, nullable=False, default=False)
-    view_once = mapped_column(Boolean, nullable=False, default=False)
-    consumed = mapped_column(Boolean, nullable=False, default=False)
     reply_to_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
@@ -157,16 +151,6 @@ class MessageReaction(Base):
     emoji = mapped_column(String(16), nullable=False)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_reaction_user"),)
-
-
-class PollVote(Base):
-    __tablename__ = "poll_votes"
-    id = mapped_column(Integer, primary_key=True)
-    message_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
-    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    option_index = mapped_column(Integer, nullable=False)
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
-    __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_pollvote_user"),)
 
 
 class PushSubscription(Base):
@@ -211,71 +195,30 @@ class Block(Base):
     __table_args__ = (UniqueConstraint("blocker_id", "blocked_id", name="uq_block_pair"),)
 
 
-class Reel(Base):
-    __tablename__ = "reels"
+class Story(Base):
+    __tablename__ = "stories"
     id = mapped_column(Integer, primary_key=True)
     user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    video_url = mapped_column(Text, nullable=False)
+    media_url = mapped_column(Text, nullable=False)
+    media_type = mapped_column(String(16), nullable=False)  # image | video
     caption = mapped_column(Text, nullable=True)
-    views = mapped_column(Integer, nullable=False, default=0)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at = mapped_column(DateTime(timezone=True), nullable=False)
+    view_count = mapped_column(Integer, nullable=False, default=0)
+    __table_args__ = (Index("idx_stories_user_expires", "user_id", "expires_at"),)
 
 
-class Follow(Base):
-    __tablename__ = "follows"
-    follower_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    followee_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
-
-
-class ReelLike(Base):
-    __tablename__ = "reel_likes"
-    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), primary_key=True)
-    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
-
-
-class ReelComment(Base):
-    __tablename__ = "reel_comments"
+class StoryView(Base):
+    __tablename__ = "story_views"
     id = mapped_column(Integer, primary_key=True)
-    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), nullable=False)
-    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    text = mapped_column(Text, nullable=False)
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
-
-
-class Status(Base):
-    __tablename__ = "statuses"
-    id = mapped_column(Integer, primary_key=True)
-    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    media_url = mapped_column(Text, nullable=True)
-    media_type = mapped_column(Text, nullable=True)   # 'image' | 'video' | None (text status)
-    text = mapped_column(Text, nullable=True)
-    bg_color = mapped_column(Text, nullable=True)
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
-
-
-class StatusView(Base):
-    __tablename__ = "status_views"
-    status_id = mapped_column(Integer, ForeignKey("statuses.id", ondelete="CASCADE"), primary_key=True)
-    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
-
-
-class Note(Base):
-    __tablename__ = "notes"
-    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    text = mapped_column(Text, nullable=False)
-    music = mapped_column(Text, nullable=True)   # JSON: {title, artist, art, url}
-    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    story_id = mapped_column(Integer, ForeignKey("stories.id", ondelete="CASCADE"), nullable=False)
+    viewer_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    viewed_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("story_id", "viewer_id", name="uq_story_view"),)
 
 
 def init_db():
     Base.metadata.create_all(engine)
-    try:
-        _get_fernet()  # warm the message-encryption key at startup
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -289,106 +232,17 @@ def _iso(dt):
     return dt.isoformat()
 
 
-# ---------------------------------------------------------------------------
-# Message encryption-at-rest. Message text is stored encrypted in the DB so a
-# database leak shows ciphertext, not conversations. The key comes from the
-# MESSAGE_ENC_KEY env var when set (best — kept OUT of the database); otherwise a
-# key is generated and stored in app_config so it still works out of the box.
-# ---------------------------------------------------------------------------
-try:
-    from cryptography.fernet import Fernet
-    _FERNET_OK = True
-except Exception:
-    _FERNET_OK = False
-
-_fernet_cache = None
-
-
-def _get_fernet():
-    global _fernet_cache
-    if _fernet_cache is not None:
-        return _fernet_cache
-    if not _FERNET_OK:
-        _fernet_cache = False
-        return False
-    key = os.environ.get("MESSAGE_ENC_KEY")
-    if not key:
-        key = get_config("msg_enc_key")
-        if not key:
-            key = Fernet.generate_key().decode("ascii")
-            set_config("msg_enc_key", key)
-    try:
-        _fernet_cache = Fernet(key.encode("ascii") if isinstance(key, str) else key)
-    except Exception:
-        _fernet_cache = False
-    return _fernet_cache
-
-
-def _enc(text):
-    """Encrypt message text for storage. Returns an 'enc:'-prefixed token."""
-    if not text:
-        return text
-    f = _get_fernet()
-    if not f:
-        return text
-    try:
-        return "enc:" + f.encrypt(text.encode("utf-8")).decode("ascii")
-    except Exception:
-        return text
-
-
-def _dec(text):
-    """Decrypt stored message text. Plaintext (legacy / unencrypted) is returned as-is."""
-    if not text or not isinstance(text, str) or not text.startswith("enc:"):
-        return text
-    f = _get_fernet()
-    if f:
-        try:
-            return f.decrypt(text[4:].encode("ascii")).decode("utf-8")
-        except Exception:
-            pass
-    return ""  # enc-prefixed but undecryptable (e.g. key changed) → never show raw ciphertext
-
-
 def public_user(u):
     if not u:
         return None
-    hide_seen = bool(getattr(u, "hide_last_seen", False))
     return {
         "id": u.id,
         "username": u.username,
         "displayName": u.display_name,
         "avatarColor": u.avatar_color,
         "avatarUrl": u.avatar_url,
-        # When a user hides their last seen, never reveal the timestamp.
-        "lastSeen": None if hide_seen else _iso(u.last_seen),
-        "hideLastSeen": hide_seen,
-        "hideReadReceipts": bool(getattr(u, "hide_read_receipts", False)),
+        "lastSeen": _iso(u.last_seen),
     }
-
-
-def user_hides_presence(uid):
-    with session_scope() as s:
-        u = s.get(User, uid)
-        return bool(u and u.hide_last_seen)
-
-
-def user_hides_receipts(uid):
-    with session_scope() as s:
-        u = s.get(User, uid)
-        return bool(u and u.hide_read_receipts)
-
-
-def set_privacy(uid, hide_last_seen=None, hide_read_receipts=None):
-    with session_scope() as s:
-        u = s.get(User, uid)
-        if not u:
-            return None
-        if hide_last_seen is not None:
-            u.hide_last_seen = bool(hide_last_seen)
-        if hide_read_receipts is not None:
-            u.hide_read_receipts = bool(hide_read_receipts)
-        return public_user(u)
 
 
 def public_message(m):
@@ -398,39 +252,30 @@ def public_message(m):
         "id": m.id,
         "conversationId": m.conversation_id,
         "senderId": m.sender_id,
-        "body": _dec(m.body),
+        "body": m.body,
         "attachmentUrl": m.attachment_url,
         "attachmentType": m.attachment_type,
         "attachmentName": m.attachment_name,
         "unsent": bool(m.unsent),
         "edited": bool(m.edited),
-        "viewOnce": bool(m.view_once),
-        "consumed": bool(m.consumed),
         "createdAt": _iso(m.created_at),
         "reactions": [],
         "replyTo": None,
-        "poll": None,
     }
 
 
 def _msg_preview(m):
     if m.unsent:
         return "unsent a message"
-    if getattr(m, "view_once", False):
-        return "👁️ Photo"
-    if m.attachment_type == "poll":
-        return "📊 Poll"
     if m.attachment_type == "image":
         return "📷 Photo"
     if m.attachment_type == "video":
         return "🎥 Video"
     if m.attachment_type == "audio":
         return "🎤 Voice message"
-    if m.attachment_type == "location":
-        return "📍 Location"
     if m.attachment_type == "file":
         return "📎 " + (m.attachment_name or "File")
-    return (_dec(m.body) or "")[:80]
+    return (m.body or "")[:80]
 
 
 # ---------------------------------------------------------------------------
@@ -674,7 +519,6 @@ def _conv_dict(c):
     return {
         "id": c.id, "user_a": c.user_a, "user_b": c.user_b,
         "is_group": bool(c.is_group), "name": c.name,
-        "description": c.description,
         "avatar_url": c.avatar_url, "avatar_color": c.avatar_color,
         "owner_id": c.owner_id, "created_at": _iso(c.created_at),
     }
@@ -785,7 +629,7 @@ def remove_group_member(conversation_id, user_id):
         ))
 
 
-def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False, description=None):
+def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False):
     with session_scope() as s:
         c = s.get(Conversation, conversation_id)
         if not c or not c.is_group:
@@ -794,45 +638,8 @@ def update_group(conversation_id, name=None, avatar_url=None, set_avatar=False, 
             c.name = name.strip()[:60] or c.name
         if set_avatar:
             c.avatar_url = avatar_url or None
-        if description is not None:
-            c.description = description.strip()[:300] or None
         s.flush()
         return _conv_dict(c)
-
-
-def set_group_owner(conversation_id, new_owner_id):
-    """Transfer admin to another member (must already be a member)."""
-    with session_scope() as s:
-        c = s.get(Conversation, conversation_id)
-        if not c or not c.is_group:
-            return False
-        m = s.execute(select(ConversationMember).where(
-            ConversationMember.conversation_id == conversation_id,
-            ConversationMember.user_id == new_owner_id,
-        )).scalar_one_or_none()
-        if not m:
-            return False
-        c.owner_id = new_owner_id
-        return True
-
-
-def message_seen_by(message_id):
-    """Group members (excluding the sender) who have read up to this message."""
-    with session_scope() as s:
-        m = s.get(Message, message_id)
-        if not m:
-            return None
-        reads = s.execute(
-            select(MessageRead.user_id).where(
-                MessageRead.conversation_id == m.conversation_id,
-                MessageRead.last_read_message_id >= message_id,
-                MessageRead.user_id != m.sender_id,
-            )
-        ).scalars().all()
-        if not reads:
-            return []
-        users = s.execute(select(User).where(User.id.in_(reads))).scalars().all()
-        return [public_user(u) for u in users]
 
 
 def public_conversation_meta(conv, me_id):
@@ -844,7 +651,6 @@ def public_conversation_meta(conv, me_id):
         "id": conv["id"],
         "isGroup": True,
         "name": conv["name"],
-        "description": conv.get("description"),
         "avatarUrl": conv["avatar_url"],
         "avatarColor": conv["avatar_color"] or "#0a7cff",
         "ownerId": conv["owner_id"],
@@ -858,14 +664,13 @@ def public_conversation_meta(conv, me_id):
 # ---------------------------------------------------------------------------
 def create_message(conversation_id, sender_id, body=None,
                    attachment_url=None, attachment_type=None, attachment_name=None,
-                   reply_to_id=None, view_once=False):
+                   reply_to_id=None):
     with session_scope() as s:
         m = Message(
             conversation_id=conversation_id, sender_id=sender_id,
-            body=(_enc(body) if body else None), attachment_url=attachment_url or None,
+            body=body or None, attachment_url=attachment_url or None,
             attachment_type=attachment_type or None, attachment_name=attachment_name or None,
             reply_to_id=reply_to_id or None,
-            view_once=bool(view_once and attachment_url),
             created_at=now_utc(),
         )
         s.add(m)
@@ -876,81 +681,6 @@ def create_message(conversation_id, sender_id, body=None,
             if o:
                 d["replyTo"] = {"id": o.id, "senderId": o.sender_id, "preview": _msg_preview(o)}
         return d
-
-
-def consume_view_once(message_id, viewer_id):
-    """Mark a view-once message as opened by its recipient and wipe the media URL
-    so it can never be fetched again. Returns (conversationId, senderId) or None."""
-    with session_scope() as s:
-        m = s.get(Message, message_id)
-        if not m or not m.view_once or m.consumed or m.sender_id == viewer_id:
-            return None
-        m.consumed = True
-        m.attachment_url = None
-        return {"conversationId": m.conversation_id, "senderId": m.sender_id}
-
-
-# ---------------------------------------------------------------------------
-# Polls (stored on the message itself; votes in poll_votes)
-# ---------------------------------------------------------------------------
-def _poll_payload(s, m):
-    try:
-        meta = json.loads(m.attachment_name or "{}")
-    except Exception:
-        meta = {}
-    rows = s.execute(
-        select(PollVote.user_id, PollVote.option_index).where(PollVote.message_id == m.id)
-    ).all()
-    return {
-        "question": meta.get("q", ""),
-        "options": meta.get("opts") or [],
-        "votes": [{"userId": uid, "optionIndex": oi} for uid, oi in rows],
-    }
-
-
-def create_poll_message(conversation_id, sender_id, question, options):
-    opts = [str(o).strip()[:80] for o in (options or []) if str(o).strip()][:4]
-    question = str(question or "").strip()[:200]
-    if not question or len(opts) < 2:
-        return None
-    with session_scope() as s:
-        m = Message(
-            conversation_id=conversation_id, sender_id=sender_id,
-            attachment_type="poll",
-            attachment_name=json.dumps({"q": question, "opts": opts}),
-            created_at=now_utc(),
-        )
-        s.add(m)
-        s.flush()
-        d = public_message(m)
-        d["poll"] = _poll_payload(s, m)
-        return d
-
-
-def vote_poll(message_id, user_id, option_index):
-    with session_scope() as s:
-        m = s.get(Message, message_id)
-        if not m or m.attachment_type != "poll":
-            return None
-        try:
-            meta = json.loads(m.attachment_name or "{}")
-        except Exception:
-            meta = {}
-        n = len(meta.get("opts") or [])
-        if option_index < 0 or option_index >= n:
-            return None
-        existing = s.execute(
-            select(PollVote).where(PollVote.message_id == message_id, PollVote.user_id == user_id)
-        ).scalar_one_or_none()
-        if existing:
-            if existing.option_index == option_index:
-                s.delete(existing)          # tap your own choice again to un-vote
-            else:
-                existing.option_index = option_index
-        else:
-            s.add(PollVote(message_id=message_id, user_id=user_id, option_index=option_index))
-        s.flush()
-        return {"conversationId": m.conversation_id, "poll": _poll_payload(s, m)}
 
 
 def get_messages(conversation_id, before_id=None, limit=40):
@@ -974,12 +704,6 @@ def get_messages(conversation_id, before_id=None, limit=40):
                 bucket.setdefault(r.message_id, []).append({"emoji": r.emoji, "userId": r.user_id})
             for m in msgs:
                 m["reactions"] = bucket.get(m["id"], [])
-        poll_rows = {r.id: r for r in rows if r.attachment_type == "poll"}
-        if poll_rows:
-            pmap = {rid: _poll_payload(s, r) for rid, r in poll_rows.items()}
-            for m in msgs:
-                if m["id"] in pmap:
-                    m["poll"] = pmap[m["id"]]
         reply_ids = {r.reply_to_id for r in rows if r.reply_to_id}
         if reply_ids:
             originals = s.execute(
@@ -991,25 +715,6 @@ def get_messages(conversation_id, before_id=None, limit=40):
                     o = omap[mr.reply_to_id]
                     md["replyTo"] = {"id": o.id, "senderId": o.sender_id, "preview": _msg_preview(o)}
         return msgs
-
-
-def list_conversation_media(conversation_id, limit=60):
-    """Photos & videos shared in a conversation, newest first (for the profile
-    'shared media' grid). Never includes unsent messages."""
-    with session_scope() as s:
-        rows = s.execute(
-            select(Message).where(
-                Message.conversation_id == conversation_id,
-                Message.attachment_type.in_(("image", "video")),
-                Message.unsent == False,  # noqa: E712
-            ).order_by(Message.id.desc()).limit(max(1, min(int(limit or 60), 120)))
-        ).scalars().all()
-        return [{
-            "id": m.id,
-            "attachmentUrl": m.attachment_url,
-            "attachmentType": m.attachment_type,
-            "createdAt": _iso(m.created_at),
-        } for m in rows]
 
 
 def get_last_message(conversation_id):
@@ -1089,7 +794,7 @@ def edit_message(message_id, new_body):
         m = s.get(Message, message_id)
         if not m or m.unsent:
             return
-        m.body = _enc(new_body)
+        m.body = new_body
         m.edited = True
 
 
@@ -1439,295 +1144,6 @@ def blocked_ids(me_id):
 
 
 # ---------------------------------------------------------------------------
-# Reels (short videos)
-# ---------------------------------------------------------------------------
-def public_reel(r, author, like_count, liked_by_me, comment_count=0, followed=False):
-    return {
-        "id": r.id,
-        "videoUrl": r.video_url,
-        "caption": r.caption or "",
-        "author": author,
-        "likeCount": int(like_count or 0),
-        "likedByMe": bool(liked_by_me),
-        "commentCount": int(comment_count or 0),
-        "views": int(getattr(r, "views", 0) or 0),
-        "followed": bool(followed),
-        "createdAt": _iso(r.created_at),
-    }
-
-
-def create_reel(user_id, video_url, caption):
-    with session_scope() as s:
-        r = Reel(user_id=user_id, video_url=video_url, caption=(caption or None), created_at=now_utc())
-        s.add(r)
-        s.flush()
-        author = public_user(s.get(User, user_id))
-        return public_reel(r, author, 0, False)
-
-
-def list_reels(me_id, before_id=None, limit=10, following_only=False):
-    """Newest-first feed of reels, with author + like + comment + follow info."""
-    with session_scope() as s:
-        q = select(Reel)
-        if following_only:
-            followee_ids = s.execute(
-                select(Follow.followee_id).where(Follow.follower_id == me_id)
-            ).scalars().all()
-            ids = list(followee_ids) + [me_id]
-            q = q.where(Reel.user_id.in_(ids))
-        if before_id:
-            q = q.where(Reel.id < before_id)
-        reels = s.execute(q.order_by(Reel.id.desc()).limit(limit)).scalars().all()
-        if not reels:
-            return []
-        rid_list = [r.id for r in reels]
-        uid_list = list({r.user_id for r in reels})
-        authors = {
-            u.id: public_user(u)
-            for u in s.execute(select(User).where(User.id.in_(uid_list))).scalars().all()
-        }
-        like_counts = dict(s.execute(
-            select(ReelLike.reel_id, func.count(ReelLike.user_id))
-            .where(ReelLike.reel_id.in_(rid_list)).group_by(ReelLike.reel_id)
-        ).all())
-        comment_counts = dict(s.execute(
-            select(ReelComment.reel_id, func.count(ReelComment.id))
-            .where(ReelComment.reel_id.in_(rid_list)).group_by(ReelComment.reel_id)
-        ).all())
-        my_likes = set(s.execute(
-            select(ReelLike.reel_id).where(ReelLike.reel_id.in_(rid_list), ReelLike.user_id == me_id)
-        ).scalars().all())
-        my_follows = set(s.execute(
-            select(Follow.followee_id).where(Follow.follower_id == me_id, Follow.followee_id.in_(uid_list))
-        ).scalars().all())
-        return [
-            public_reel(r, authors.get(r.user_id), like_counts.get(r.id, 0), r.id in my_likes,
-                        comment_counts.get(r.id, 0), r.user_id in my_follows)
-            for r in reels
-        ]
-
-
-def increment_reel_views(reel_id):
-    with session_scope() as s:
-        r = s.get(Reel, reel_id)
-        if r:
-            r.views = (r.views or 0) + 1
-            return int(r.views)
-        return 0
-
-
-def add_reel_comment(reel_id, user_id, text):
-    with session_scope() as s:
-        if not s.get(Reel, reel_id):
-            return None
-        c = ReelComment(reel_id=reel_id, user_id=user_id, text=text, created_at=now_utc())
-        s.add(c)
-        s.flush()
-        return {
-            "id": c.id, "text": c.text, "author": public_user(s.get(User, user_id)),
-            "createdAt": _iso(c.created_at),
-        }
-
-
-def list_reel_comments(reel_id):
-    with session_scope() as s:
-        rows = s.execute(
-            select(ReelComment).where(ReelComment.reel_id == reel_id).order_by(ReelComment.id.asc())
-        ).scalars().all()
-        if not rows:
-            return []
-        uids = list({c.user_id for c in rows})
-        authors = {u.id: public_user(u) for u in s.execute(select(User).where(User.id.in_(uids))).scalars().all()}
-        return [{"id": c.id, "text": c.text, "author": authors.get(c.user_id), "createdAt": _iso(c.created_at)} for c in rows]
-
-
-def delete_reel_comment(comment_id, user_id):
-    with session_scope() as s:
-        c = s.get(ReelComment, comment_id)
-        if not c or c.user_id != user_id:
-            return False
-        s.delete(c)
-        return True
-
-
-def toggle_follow(follower_id, followee_id):
-    if follower_id == followee_id:
-        return {"following": False}
-    with session_scope() as s:
-        existing = s.get(Follow, (follower_id, followee_id))
-        if existing:
-            s.delete(existing)
-            return {"following": False}
-        s.add(Follow(follower_id=follower_id, followee_id=followee_id, created_at=now_utc()))
-        return {"following": True}
-
-
-def toggle_reel_like(reel_id, user_id):
-    with session_scope() as s:
-        existing = s.get(ReelLike, (reel_id, user_id))
-        if existing:
-            s.delete(existing)
-            liked = False
-        else:
-            s.add(ReelLike(reel_id=reel_id, user_id=user_id, created_at=now_utc()))
-            liked = True
-        s.flush()
-        count = s.execute(
-            select(func.count(ReelLike.user_id)).where(ReelLike.reel_id == reel_id)
-        ).scalar_one()
-        return {"liked": liked, "likeCount": int(count or 0)}
-
-
-def delete_reel(reel_id, user_id):
-    """Delete a reel only if it belongs to the user. Returns True if deleted."""
-    with session_scope() as s:
-        r = s.get(Reel, reel_id)
-        if not r or r.user_id != user_id:
-            return False
-        s.delete(r)
-        return True
-
-
-# ---------------------------------------------------------------------------
-# Status / Story (24h)
-# ---------------------------------------------------------------------------
-def public_status(st):
-    return {
-        "id": st.id,
-        "userId": st.user_id,
-        "mediaUrl": st.media_url,
-        "mediaType": st.media_type,
-        "text": st.text or "",
-        "bgColor": st.bg_color,
-        "createdAt": _iso(st.created_at),
-    }
-
-
-def create_status(user_id, media_url=None, media_type=None, text=None, bg_color=None):
-    with session_scope() as s:
-        st = Status(user_id=user_id, media_url=media_url or None, media_type=media_type or None,
-                    text=(text or None), bg_color=bg_color or None, created_at=now_utc())
-        s.add(st)
-        s.flush()
-        return public_status(st)
-
-
-def status_feed(me_id):
-    """Statuses from me + my friends in the last 24h, grouped by user."""
-    cutoff = now_utc() - timedelta(hours=24)
-    with session_scope() as s:
-        fr = s.execute(
-            select(Friendship).where(
-                or_(Friendship.requester_id == me_id, Friendship.addressee_id == me_id),
-                Friendship.status == "accepted",
-            )
-        ).scalars().all()
-        friend_ids = [(f.addressee_id if f.requester_id == me_id else f.requester_id) for f in fr]
-        user_ids = list(set(friend_ids) | {me_id})
-
-        rows = s.execute(
-            select(Status).where(Status.user_id.in_(user_ids), Status.created_at >= cutoff)
-            .order_by(Status.created_at.asc())
-        ).scalars().all()
-        notes = {
-            n.user_id: n
-            for n in s.execute(select(Note).where(Note.user_id.in_(user_ids), Note.created_at >= cutoff)).scalars().all()
-        }
-        active_uids = set(notes.keys()) | {r.user_id for r in rows}
-        if not active_uids:
-            return []
-        sid_list = [r.id for r in rows]
-        my_views = set(s.execute(
-            select(StatusView.status_id).where(StatusView.status_id.in_(sid_list), StatusView.user_id == me_id)
-        ).scalars().all()) if sid_list else set()
-        authors = {
-            u.id: public_user(u)
-            for u in s.execute(select(User).where(User.id.in_(active_uids))).scalars().all()
-        }
-        groups = {}
-        for r in rows:
-            g = groups.setdefault(r.user_id, {"user": authors.get(r.user_id), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
-            ps = public_status(r)
-            ps["seen"] = r.id in my_views
-            g["statuses"].append(ps)
-            g["_latest"] = ps["createdAt"] or g["_latest"]
-            if not ps["seen"] and r.user_id != me_id:
-                g["hasUnseen"] = True
-        for uid in active_uids:
-            g = groups.setdefault(uid, {"user": authors.get(uid), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
-            n = notes.get(uid)
-            if n:
-                music = None
-                if n.music:
-                    try:
-                        music = json.loads(n.music)
-                    except Exception:
-                        music = None
-                g["note"] = {"text": n.text, "music": music, "createdAt": _iso(n.created_at)}
-                if not g["_latest"]:
-                    g["_latest"] = _iso(n.created_at)
-        result = [g for g in groups.values() if g["user"]]
-        # stable sorts (apply least-significant first): most-recent, then unseen, then me
-        result.sort(key=lambda g: g["_latest"], reverse=True)
-        result.sort(key=lambda g: (g["user"]["id"] != me_id, not g["hasUnseen"]))
-        for g in result:
-            g.pop("_latest", None)
-        return result
-
-
-def mark_status_viewed(status_id, user_id):
-    with session_scope() as s:
-        if s.get(Status, status_id) and not s.get(StatusView, (status_id, user_id)):
-            s.add(StatusView(status_id=status_id, user_id=user_id, created_at=now_utc()))
-
-
-def delete_status(status_id, user_id):
-    with session_scope() as s:
-        st = s.get(Status, status_id)
-        if not st or st.user_id != user_id:
-            return False
-        s.delete(st)
-        return True
-
-
-def set_note(user_id, text, music=None):
-    """Set (or replace) the user's 24h note (optional attached song)."""
-    music_json = json.dumps(music) if music else None
-    with session_scope() as s:
-        n = s.get(Note, user_id)
-        if n:
-            n.text = text
-            n.music = music_json
-            n.created_at = now_utc()
-        else:
-            s.add(Note(user_id=user_id, text=text, music=music_json, created_at=now_utc()))
-
-
-def clear_note(user_id):
-    with session_scope() as s:
-        n = s.get(Note, user_id)
-        if n:
-            s.delete(n)
-
-
-def list_status_viewers(status_id, owner_id):
-    """Who viewed a status — only the owner may see this. Returns list or None."""
-    with session_scope() as s:
-        st = s.get(Status, status_id)
-        if not st or st.user_id != owner_id:
-            return None
-        rows = s.execute(
-            select(StatusView).where(StatusView.status_id == status_id, StatusView.user_id != owner_id)
-            .order_by(StatusView.created_at.desc())
-        ).scalars().all()
-        if not rows:
-            return []
-        uids = [v.user_id for v in rows]
-        users = {u.id: public_user(u) for u in s.execute(select(User).where(User.id.in_(uids))).scalars().all()}
-        return [users[v.user_id] for v in rows if v.user_id in users]
-
-
-# ---------------------------------------------------------------------------
 # Push subscriptions & app config
 # ---------------------------------------------------------------------------
 def get_config(key):
@@ -1795,3 +1211,140 @@ def get_nicknames(owner_id):
             select(FriendNickname).where(FriendNickname.owner_id == owner_id)
         ).scalars().all()
         return {r.friend_id: r.nickname for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Stories (My Day)
+# ---------------------------------------------------------------------------
+STORY_TTL_HOURS = 24
+
+
+def create_story(user_id, media_url, media_type, caption=None):
+    """Create a new story. Returns the story dict."""
+    expires = now_utc() + timedelta(hours=STORY_TTL_HOURS)
+    with session_scope() as s:
+        story = Story(
+            user_id=user_id,
+            media_url=media_url,
+            media_type=media_type,
+            caption=caption,
+            expires_at=expires,
+            created_at=now_utc(),
+        )
+        s.add(story)
+        s.flush()
+        return public_story(story)
+
+
+def public_story(story):
+    if not story:
+        return None
+    return {
+        "id": story.id,
+        "userId": story.user_id,
+        "mediaUrl": story.media_url,
+        "mediaType": story.media_type,
+        "caption": story.caption,
+        "createdAt": _iso(story.created_at),
+        "expiresAt": _iso(story.expires_at),
+        "viewCount": story.view_count,
+    }
+
+
+def get_user_stories(user_id, include_expired=False):
+    """Get all stories for a user (non-expired by default)."""
+    with session_scope() as s:
+        q = select(Story).where(Story.user_id == user_id)
+        if not include_expired:
+            q = q.where(Story.expires_at > now_utc())
+        q = q.order_by(Story.created_at.desc())
+        rows = s.execute(q).scalars().all()
+        return [public_story(r) for r in rows]
+
+
+def get_friends_stories(me_id):
+    """Get latest story per friend (for the story tray)."""
+    with session_scope() as s:
+        friend_ids = [f["id"] for f in list_friends(me_id)]
+        if not friend_ids:
+            return []
+        # Subquery: latest non-expired story per friend
+        subq = (
+            select(Story)
+            .where(Story.user_id.in_(friend_ids))
+            .where(Story.expires_at > now_utc())
+            .order_by(Story.user_id, Story.created_at.desc())
+            .distinct(Story.user_id)
+        ).subquery()
+        rows = s.execute(select(Story).select_from(subq)).scalars().all()
+        # Also include my own stories at the front
+        my_stories = s.execute(
+            select(Story).where(Story.user_id == me_id, Story.expires_at > now_utc())
+            .order_by(Story.created_at.desc())
+        ).scalars().all()
+        all_stories = list(my_stories) + list(rows)
+        # Enrich with user info
+        user_ids = list({st.user_id for st in all_stories})
+        users = {u.id: public_user(u) for u in s.execute(select(User).where(User.id.in_(user_ids))).scalars().all()}
+        result = []
+        for st in all_stories:
+            d = public_story(st)
+            d["user"] = users.get(st.user_id)
+            result.append(d)
+        return result
+
+
+def get_story_by_id(story_id):
+    with session_scope() as s:
+        st = s.get(Story, story_id)
+        return public_story(st) if st else None
+
+
+def view_story(story_id, viewer_id):
+    """Record a view. Returns True if this is a new view."""
+    with session_scope() as s:
+        st = s.get(Story, story_id)
+        if not st or st.expires_at <= now_utc():
+            return False
+        existing = s.execute(
+            select(StoryView).where(StoryView.story_id == story_id, StoryView.viewer_id == viewer_id)
+        ).scalar_one_or_none()
+        if existing:
+            return False
+        s.add(StoryView(story_id=story_id, viewer_id=viewer_id, viewed_at=now_utc()))
+        st.view_count = (st.view_count or 0) + 1
+        return True
+
+
+def get_story_viewers(story_id):
+    """Get list of users who viewed this story."""
+    with session_scope() as s:
+        rows = s.execute(
+            select(StoryView, User)
+            .join(User, User.id == StoryView.viewer_id)
+            .where(StoryView.story_id == story_id)
+            .order_by(StoryView.viewed_at.desc())
+        ).all()
+        return [{"viewer": public_user(u), "viewedAt": _iso(sv.viewed_at)} for sv, u in rows]
+
+
+def delete_story(story_id, user_id):
+    """Delete own story."""
+    with session_scope() as s:
+        st = s.get(Story, story_id)
+        if st and st.user_id == user_id:
+            s.delete(st)
+            return True
+        return False
+
+
+def cleanup_expired_stories():
+    """Delete expired stories and their media. Called by cron."""
+    with session_scope() as s:
+        expired = s.execute(
+            select(Story).where(Story.expires_at <= now_utc())
+        ).scalars().all()
+        count = len(expired)
+        for st in expired:
+            s.delete(st)
+        return count

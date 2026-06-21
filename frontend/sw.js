@@ -62,7 +62,7 @@ self.addEventListener('push', (event) => {
       badge: '/icon-192.png',
       tag: isCall ? 'tea-call' : 'tea-message',
       renotify: true,        // re-alert (sound + buzz) for each new message
-      silent: false,         // play the device's notification sound
+      silent: true,          // don't play the device's notification sound (in-app + toasts handle it)
       vibrate: isCall ? [400, 200, 400, 200, 400, 200, 400] : [120, 60, 120, 60, 120],
       requireInteraction: !!isCall,  // a call stays up until tapped
       data: { conversationId: data.conversationId || null, type: data.type || null },
