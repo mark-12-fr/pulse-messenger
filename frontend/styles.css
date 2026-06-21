@@ -1354,6 +1354,18 @@ html.resume #auth-screen { display: none; }
 .st-note-music { color: var(--accent); cursor: pointer; }
 .st-note-music.playing { background: var(--accent-grad); color: #fff; border-color: transparent; }
 
+/* note composer (Messenger-style) */
+.music-search { z-index: 340; }   /* must sit above the note composer modal (320) */
+.note-card { text-align: center; }
+.note-head { font-weight: 800; font-size: 18px; margin-bottom: 18px; }
+.note-preview { display: flex; flex-direction: column; align-items: center; margin-bottom: 16px; }
+.note-bubble { max-width: 80%; background: var(--elev); border: 1px solid var(--line); color: var(--text); border-radius: 18px; border-bottom-left-radius: 6px; padding: 10px 16px; font-size: 15px; font-weight: 650; box-shadow: var(--shadow-soft); margin-bottom: -10px; position: relative; z-index: 1; word-break: break-word; min-height: 21px; }
+.note-bubble.empty { color: var(--text-faint); font-weight: 500; }
+.avatar.note-av { width: 74px; height: 74px; font-size: 27px; }
+.note-field { margin-bottom: 12px; }
+.note-field input { width: 100%; border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; background: var(--field); color: var(--text); outline: none; font-size: 15px; text-align: center; }
+.note-foot { margin-top: 14px; font-size: 12px; color: var(--text-faint); }
+
 /* note song chip (composer) + music search */
 .note-music-row { margin: 4px 0 14px; }
 .note-music-add { width: 100%; }
