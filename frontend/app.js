@@ -5158,8 +5158,13 @@
     const bar = document.getElementById('status-bar');
     if (!bar) return;
     bar.addEventListener('click', (e) => {
-      const mus = e.target.closest('[data-note-music]');
-      if (mus) { e.stopPropagation(); playNotePreview(decodeURIComponent(mus.dataset.noteMusic), mus); return; }
+      // tap a friend's note bubble → open the FULL note (so long text is readable)
+      const noteEl = e.target.closest('.st-note');
+      const openItem = e.target.closest('[data-st-open]');
+      if (noteEl && !noteEl.classList.contains('st-note-add') && openItem) {
+        const g = (state.statusFeed || []).find((x) => x.user && x.user.id === Number(openItem.dataset.stOpen));
+        if (g && g.note) { e.stopPropagation(); openNoteView(g); return; }
+      }
       if (e.target.closest('[data-st-mine]')) { openAddStatusMenu(); return; }
       const open = e.target.closest('[data-st-open]');
       if (open) {
@@ -5167,10 +5172,38 @@
         const g = (state.statusFeed || []).find((x) => x.user && x.user.id === uid);
         if (!g) return;
         if (g.statuses && g.statuses.length) openStory(g);
-        else if (g.note) openConversationByPeer(uid); // note-only → open chat to reply
+        else if (g.note) openNoteView(g); // note-only → show the full note
       }
     });
   })();
+
+  // Full-note viewer — shows the complete note text (long words and all) + song.
+  function openNoteView(group) {
+    if (!group || !group.note || !group.user) return;
+    const n = group.note;
+    const mine = group.user.id === state.me.id;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal note-view-modal';
+    overlay.innerHTML = `
+      <div class="modal-card note-view-card">
+        <div class="nv-head">${avatarHtml(group.user, { cls: 'nv-av' })}<div class="nv-who"><div class="nv-name">${escapeHtml(friendName(group.user) || group.user.displayName || '')}</div><div class="nv-time">${timeAgo(n.createdAt)}</div></div></div>
+        ${(n.text || !n.music) ? `<div class="nv-bubble">${n.music ? EQ : ''}${escapeHtml(n.text || '')}</div>` : ''}
+        ${n.music ? `<button class="nv-song" data-nv-play>${n.music.art ? `<img src="${escapeHtml(n.music.art)}" alt="">` : '<span class="nv-song-art">🎵</span>'}<span class="nv-song-meta"><b>${escapeHtml(n.music.title)}</b><span>${escapeHtml(n.music.artist)}</span></span><span class="nv-play-ic">${IC.play}</span></button>` : ''}
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Close</button>
+          ${mine ? `<button class="btn-primary" data-nv-edit>Edit note</button>` : `<button class="btn-primary" data-nv-msg>Message</button>`}
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('[data-cancel]')) return close();
+      if (e.target.closest('[data-nv-play]')) { playNotePreview(n.music && n.music.url, e.target.closest('.nv-song')); return; }
+      if (e.target.closest('[data-nv-edit]')) { close(); openNoteComposer(); return; }
+      if (e.target.closest('[data-nv-msg]')) { close(); openConversationByPeer(group.user.id); return; }
+    });
+  }
 
   function openAddStatusMenu() {
     const myGroup = (state.statusFeed || []).find((g) => g.user && g.user.id === state.me.id);
