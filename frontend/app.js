@@ -1208,6 +1208,48 @@
     }
     updateScrollBtn();
     loadLinkPreviews();
+    if (!m.pending || out) maybeChatEffect(m.body);  // celebrate fun messages
+  }
+
+  // ---- chat effects: full-screen confetti / hearts / balloons on fun messages ----
+  function detectEffect(text) {
+    if (!text) return null;
+    const t = String(text).toLowerCase();
+    if (/🎂|🥳|🎉|🎊|happy\s*birthday|congrats|congratulation/.test(t)) return 'confetti';
+    if (/🎈/.test(t)) return 'balloons';
+    if (/❤️|❤|💖|💕|💗|💓|💞|🥰|😍|i\s*love\s*you|love\s*you|\bily\b/.test(t)) return 'hearts';
+    return null;
+  }
+  let _fxBusy = false;
+  function maybeChatEffect(text) {
+    const fx = detectEffect(text);
+    if (fx) playChatEffect(fx);
+  }
+  function playChatEffect(type) {
+    if (_fxBusy) return;
+    _fxBusy = true;
+    const sets = {
+      confetti: ['🎉', '🎊', '✨', '⭐', '🎈'],
+      hearts: ['❤️', '💖', '💕', '💗', '🥰'],
+      balloons: ['🎈', '🎈', '🎉', '✨'],
+    };
+    const emojis = sets[type] || sets.confetti;
+    const rise = type !== 'confetti';
+    const layer = document.createElement('div');
+    layer.className = 'fx-layer';
+    let html = '';
+    for (let i = 0; i < 26; i++) {
+      const em = emojis[Math.floor(Math.random() * emojis.length)];
+      const left = Math.random() * 100;
+      const dur = 2.6 + Math.random() * 1.8;
+      const delay = Math.random() * 0.5;
+      const size = 18 + Math.random() * 22;
+      const rot = Math.floor(Math.random() * 140 - 70);
+      html += `<span class="fx ${rise ? 'fx-rise' : 'fx-fall'}" style="left:${left}%;font-size:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;--rot:${rot}deg">${em}</span>`;
+    }
+    layer.innerHTML = html;
+    document.body.appendChild(layer);
+    setTimeout(() => { layer.remove(); _fxBusy = false; }, 4400);
   }
 
   function reactionsHtml(m) {
