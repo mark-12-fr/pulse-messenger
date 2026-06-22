@@ -503,6 +503,32 @@
     if (state.socket && state.socket.connected) {
       state.socket.emit('presence:active', { active: document.visibilityState === 'visible' });
     }
+    // Cleanup audio when backgrounded to prevent battery drain and resource leak
+    if (document.visibilityState === 'hidden') {
+      stopNotePreview();
+      stopRinging();
+      stopRingAudio();
+    }
+  });
+
+  // Cleanup all audio resources when page unloads
+  window.addEventListener('beforeunload', () => {
+    stopNotePreview();
+    destroyNotePreview();
+    stopRinging();
+    destroyRingtoneEl();
+    stopRingAudio();
+    if (callAudioCtx && callAudioCtx.state !== 'closed') {
+      try { callAudioCtx.close(); } catch (e) {}
+    }
+    callAudioCtx = null;
+  });
+
+  // Also handle pagehide for mobile background tabs
+  window.addEventListener('pagehide', () => {
+    stopNotePreview();
+    stopRinging();
+    stopRingAudio();
   });
 
   // ============================================================
@@ -895,6 +921,7 @@
   async function openConversation(conversationId, peerId) {
     const peer = state.friends.get(peerId);
     if (!peer) return;
+    stopNotePreview(); // Stop music preview when switching conversations
     saveDraft(); // keep what was typed in the chat we're leaving
     if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
@@ -954,6 +981,7 @@
 
   async function openGroup(cid) {
     const conv = state.conversations.get(cid);
+    stopNotePreview(); // Stop music preview when switching conversations
     saveDraft();
     if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
@@ -3405,6 +3433,23 @@
   // synthesized WAV (no asset needed) played through an <audio> element, which
   // loops reliably and is loud. Primed on the first tap so it can ring later.
   let ringtoneEl = null;
+  
+  // Properly cleanup ringtone element: stop, remove listeners, destroy reference
+  function destroyRingtoneEl() {
+    if (ringtoneEl) {
+      try {
+        ringtoneEl.pause();
+        ringtoneEl.currentTime = 0;
+        ringtoneEl.src = '';
+        ringtoneEl.removeAttribute('src');
+        // Remove all event listeners by cloning (cleanest way)
+        const newEl = ringtoneEl.cloneNode(false);
+        if (ringtoneEl.parentNode) ringtoneEl.parentNode.replaceChild(newEl, ringtoneEl);
+      } catch (e) {}
+      ringtoneEl = null;
+    }
+  }
+  
   function buildRingtoneUri() {
     const sr = 22050, dur = 3.0, n = Math.floor(sr * dur);
     const ramp = (x, len) => Math.max(0, Math.min(1, Math.min(x, len - x, 0.05) / 0.05));
@@ -3729,8 +3774,19 @@
     closeCallUI(reason);
   }
 
+  
   function endCallCleanup() {
     stopRinging();
+    // Destroy audio resources completely
+    destroyRingtoneEl();
+    // Close AudioContext to free memory (can be recreated if needed)
+    if (callAudioCtx && callAudioCtx.state !== 'closed') {
+      try { callAudioCtx.close(); } catch (e) {}
+    }
+    callAudioCtx = null;
+    ringStop = null;
+    ringAudioTimer = null;
+    
     if (!activeCall) return;
     try { clearInterval(activeCall.timer); } catch (e) {}
     try { clearTimeout(activeCall.dropTimer); } catch (e) {}
@@ -3851,6 +3907,7 @@
     if (ringVibTimer) { clearInterval(ringVibTimer); ringVibTimer = null; }
     try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
   }
+
 
   function setCallButtonsVisible(show) {
     ['call-audio-btn', 'call-video-btn'].forEach((id) => {
@@ -5329,7 +5386,28 @@
     a._url = url; a.src = url;
     a.play().then(() => { if (el) el.classList.add('playing'); }).catch(() => {});
   }
-  function stopNotePreview() { if (_notePreview) { _notePreview.pause(); _notePreview._url = null; } }
+  function stopNotePreview() { 
+    if (_notePreview) { 
+      _notePreview.pause(); 
+      _notePreview._url = null; 
+    } 
+  }
+  
+  // Properly destroy note preview audio element and free resources
+  function destroyNotePreview() {
+    if (_notePreview) {
+      try {
+        _notePreview.pause();
+        _notePreview.currentTime = 0;
+        _notePreview.src = '';
+        _notePreview.removeAttribute('src');
+        // Cloning removes all event listeners cleanly
+        const newEl = _notePreview.cloneNode(false);
+        if (_notePreview.parentNode) _notePreview.parentNode.replaceChild(newEl, _notePreview);
+      } catch (e) {}
+      _notePreview = null;
+    }
+  }
 
   // animated equalizer bars — shown on notes that have a song (Messenger-style)
   const EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
