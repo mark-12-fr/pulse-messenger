@@ -9,12 +9,13 @@ All helpers return plain dicts (never live ORM objects), so they are safe to use
 from both HTTP request handlers and Socket.IO event handlers.
 """
 
+import json
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    create_engine, select, or_, and_, func, delete,
+    create_engine, select, or_, and_, func, delete, text,
     Integer, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, Index,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, mapped_column, aliased
@@ -199,9 +200,11 @@ class Story(Base):
     __tablename__ = "stories"
     id = mapped_column(Integer, primary_key=True)
     user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    media_url = mapped_column(Text, nullable=False)
-    media_type = mapped_column(String(16), nullable=False)  # image | video
+    media_url = mapped_column(Text, nullable=True)
+    media_type = mapped_column(String(16), nullable=False)  # image | video | text
     caption = mapped_column(Text, nullable=True)
+    text = mapped_column(Text, nullable=True)
+    bg_color = mapped_column(String(32), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     expires_at = mapped_column(DateTime(timezone=True), nullable=False)
     view_count = mapped_column(Integer, nullable=False, default=0)
@@ -217,8 +220,49 @@ class StoryView(Base):
     __table_args__ = (UniqueConstraint("story_id", "viewer_id", name="uq_story_view"),)
 
 
+class Note(Base):
+    __tablename__ = "notes"
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    text = mapped_column(Text, nullable=False)
+    music = mapped_column(Text, nullable=True)   # JSON: {title, artist, art, url}
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+def set_note(user_id, text, music=None):
+    """Set (or replace) the user's 24h note (optional attached song)."""
+    music_json = json.dumps(music) if music else None
+    with session_scope() as s:
+        n = s.get(Note, user_id)
+        if n:
+            n.text = text
+            n.music = music_json
+            n.created_at = now_utc()
+        else:
+            s.add(Note(user_id=user_id, text=text, music=music_json, created_at=now_utc()))
+
+
+def clear_note(user_id):
+    with session_scope() as s:
+        n = s.get(Note, user_id)
+        if n:
+            s.delete(n)
+
+
 def init_db():
     Base.metadata.create_all(engine)
+    # Migrate existing tables (safe to run multiple times)
+    try:
+        with engine.connect() as c:
+            c.execute(text("ALTER TABLE stories ADD COLUMN text TEXT"))
+            c.commit()
+    except Exception:
+        pass
+    try:
+        with engine.connect() as c:
+            c.execute(text("ALTER TABLE stories ADD COLUMN bg_color VARCHAR(32)"))
+            c.commit()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1219,7 +1263,7 @@ def get_nicknames(owner_id):
 STORY_TTL_HOURS = 24
 
 
-def create_story(user_id, media_url, media_type, caption=None):
+def create_story(user_id, media_url, media_type, caption=None, text=None, bg_color=None):
     """Create a new story. Returns the story dict."""
     expires = now_utc() + timedelta(hours=STORY_TTL_HOURS)
     with session_scope() as s:
@@ -1228,6 +1272,8 @@ def create_story(user_id, media_url, media_type, caption=None):
             media_url=media_url,
             media_type=media_type,
             caption=caption,
+            text=text,
+            bg_color=bg_color,
             expires_at=expires,
             created_at=now_utc(),
         )
@@ -1245,6 +1291,8 @@ def public_story(story):
         "mediaUrl": story.media_url,
         "mediaType": story.media_type,
         "caption": story.caption,
+        "text": story.text or "",
+        "bgColor": story.bg_color,
         "createdAt": _iso(story.created_at),
         "expiresAt": _iso(story.expires_at),
         "viewCount": story.view_count,
@@ -1348,3 +1396,65 @@ def cleanup_expired_stories():
         for st in expired:
             s.delete(st)
         return count
+
+
+def status_feed(me_id):
+    """Stories from me + my friends in the last 24h, grouped by user (legacy /api/status format)."""
+    cutoff = now_utc() - timedelta(hours=24)
+    with session_scope() as s:
+        fr = s.execute(
+            select(Friendship).where(
+                or_(Friendship.requester_id == me_id, Friendship.addressee_id == me_id),
+                Friendship.status == "accepted",
+            )
+        ).scalars().all()
+        friend_ids = [(f.addressee_id if f.requester_id == me_id else f.requester_id) for f in fr]
+        user_ids = list(set(friend_ids) | {me_id})
+
+        rows = s.execute(
+            select(Story).where(Story.user_id.in_(user_ids), Story.created_at >= cutoff)
+            .order_by(Story.created_at.asc())
+        ).scalars().all()
+        notes = {
+            n.user_id: n
+            for n in s.execute(select(Note).where(Note.user_id.in_(user_ids), Note.created_at >= cutoff)).scalars().all()
+        }
+        active_uids = set(notes.keys()) | {r.user_id for r in rows}
+        if not active_uids:
+            return []
+        sid_list = [r.id for r in rows]
+        my_views = set(s.execute(
+            select(StoryView.story_id).where(StoryView.story_id.in_(sid_list), StoryView.viewer_id == me_id)
+        ).scalars().all()) if sid_list else set()
+        authors = {
+            u.id: public_user(u)
+            for u in s.execute(select(User).where(User.id.in_(active_uids))).scalars().all()
+        }
+        groups = {}
+        for r in rows:
+            g = groups.setdefault(r.user_id, {"user": authors.get(r.user_id), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
+            ps = public_story(r)
+            ps["seen"] = r.id in my_views
+            g["statuses"].append(ps)
+            g["_latest"] = ps["createdAt"] or g["_latest"]
+            if not ps["seen"] and r.user_id != me_id:
+                g["hasUnseen"] = True
+        for uid in active_uids:
+            g = groups.setdefault(uid, {"user": authors.get(uid), "statuses": [], "hasUnseen": False, "_latest": "", "note": None})
+            n = notes.get(uid)
+            if n:
+                music = None
+                if n.music:
+                    try:
+                        music = json.loads(n.music)
+                    except Exception:
+                        music = None
+                g["note"] = {"text": n.text, "music": music, "createdAt": _iso(n.created_at)}
+                if not g["_latest"]:
+                    g["_latest"] = _iso(n.created_at)
+        result = [g for g in groups.values() if g["user"]]
+        result.sort(key=lambda g: g["_latest"], reverse=True)
+        result.sort(key=lambda g: (g["user"]["id"] != me_id, not g["hasUnseen"]))
+        for g in result:
+            g.pop("_latest", None)
+        return result

@@ -39,6 +39,7 @@ elif ASYNC_MODE == "gevent":
     except Exception:
         pass
 
+import random
 import re
 import time
 import secrets
@@ -768,6 +769,147 @@ def too_large(_e):
 @app.get("/uploads/<path:filename>")
 def serve_upload(filename):
     return send_from_directory(storage.LOCAL_DIR, filename)
+
+
+# ---------------------------------------------------------------------------
+# Music / Notes
+# ---------------------------------------------------------------------------
+def _sanitize_music(m):
+    """Keep only the safe fields of an attached song; require https URLs."""
+    if not isinstance(m, dict):
+        return None
+    url = str(m.get("url") or "")
+    art = str(m.get("art") or "")
+    if not url.startswith("https://"):
+        return None
+    return {
+        "title": str(m.get("title") or "")[:120],
+        "artist": str(m.get("artist") or "")[:120],
+        "art": art[:300] if art.startswith("https://") else "",
+        "url": url[:400],
+    }
+
+
+_MUSIC_SEEDS = [
+    "Taylor Swift", "The Weeknd", "Bruno Mars", "Ed Sheeran", "Billie Eilish",
+    "BTS", "Olivia Rodrigo", "Coldplay", "Dua Lipa", "Adele", "Lady Gaga",
+    "SB19", "Ben&Ben", "Moira Dela Torre", "Arthur Nery", "Juan Karlos",
+    "Sarah Geronimo", "December Avenue", "Cup of Joe", "Bini",
+]
+
+
+def _itunes_songs(term, limit):
+    r = requests.get(
+        "https://itunes.apple.com/search",
+        params={"term": term, "media": "music", "entity": "song", "limit": limit},
+        headers={"User-Agent": "Mozilla/5.0 (compatible; TeaApp/1.0)"},
+        timeout=8,
+    )
+    out = []
+    for it in (r.json().get("results") or []):
+        prev = it.get("previewUrl")
+        if not prev:
+            continue
+        art = it.get("artworkUrl100") or ""
+        out.append({
+            "title": (it.get("trackName") or "")[:120],
+            "artist": (it.get("artistName") or "")[:120],
+            "art": art.replace("100x100bb", "200x200bb") if art else "",
+            "url": prev,
+        })
+    return out
+
+
+@app.get("/api/music/search")
+@auth_required
+def music_search():
+    q = str(request.args.get("q", "")).strip()
+    if not q:
+        seen, out = set(), []
+        for term in random.sample(_MUSIC_SEEDS, 4):
+            try:
+                for s in _itunes_songs(term, 5):
+                    if s["url"] in seen:
+                        continue
+                    seen.add(s["url"])
+                    out.append(s)
+            except Exception:
+                continue
+        random.shuffle(out)
+        return jsonify(results=out[:18])
+    try:
+        return jsonify(results=_itunes_songs(q, 18))
+    except Exception:
+        return jsonify(results=[])
+
+
+@app.post("/api/note")
+@auth_required
+def set_note():
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:60]
+    music = _sanitize_music(data.get("music")) if data.get("music") else None
+    if not text and not music:
+        db.clear_note(g.user["id"])
+        return jsonify(ok=True, cleared=True)
+    db.set_note(g.user["id"], text, music)
+    return jsonify(ok=True)
+
+
+@app.delete("/api/note")
+@auth_required
+def clear_note():
+    db.clear_note(g.user["id"])
+    return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Status / Story feed (legacy /api/status endpoints for the frontend)
+# ---------------------------------------------------------------------------
+@app.get("/api/status")
+@auth_required
+def status_feed():
+    return jsonify(feed=db.status_feed(g.user["id"]))
+
+
+@app.post("/api/status")
+@auth_required
+def create_status():
+    data = request.get_json(silent=True) or {}
+    media_url = str(data.get("mediaUrl") or "").strip() or None
+    media_type = str(data.get("mediaType") or "").strip() or None
+    text = str(data.get("text") or "").strip()[:700] or None
+    bg = str(data.get("bgColor") or "").strip()[:32] or None
+    if not media_url and not text:
+        return jsonify(error="Empty status."), 400
+    st = db.create_story(g.user["id"], media_url=media_url, media_type=media_type, text=text, bg_color=bg)
+    return jsonify(status=st)
+
+
+@app.post("/api/status/<int:sid>/view")
+@auth_required
+def view_status(sid):
+    db.view_story(sid, g.user["id"])
+    return jsonify(ok=True)
+
+
+@app.get("/api/status/<int:sid>/viewers")
+@auth_required
+def status_viewers(sid):
+    story = db.get_story_by_id(sid)
+    if not story or story.get("userId") != g.user["id"]:
+        return jsonify(error="Not found."), 404
+    viewers = db.get_story_viewers(sid)
+    return jsonify(viewers=viewers)
+
+
+@app.delete("/api/status/<int:sid>")
+@auth_required
+def remove_status(sid):
+    ok = db.delete_story(sid, g.user["id"])
+    if not ok:
+        return jsonify(error="Not found."), 404
+    return jsonify(ok=True)
 
 
 # ---------------------------------------------------------------------------
