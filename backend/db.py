@@ -196,6 +196,39 @@ class Block(Base):
     __table_args__ = (UniqueConstraint("blocker_id", "blocked_id", name="uq_block_pair"),)
 
 
+class Follow(Base):
+    __tablename__ = "follows"
+    follower_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    followee_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class Reel(Base):
+    __tablename__ = "reels"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    video_url = mapped_column(Text, nullable=False)
+    caption = mapped_column(Text, nullable=True)
+    views = mapped_column(Integer, nullable=False, default=0)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ReelLike(Base):
+    __tablename__ = "reel_likes"
+    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ReelComment(Base):
+    __tablename__ = "reel_comments"
+    id = mapped_column(Integer, primary_key=True)
+    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), nullable=False)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    text = mapped_column(Text, nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class Story(Base):
     __tablename__ = "stories"
     id = mapped_column(Integer, primary_key=True)
@@ -1185,6 +1218,157 @@ def blocked_ids(me_id):
             select(Block.blocked_id).where(Block.blocker_id == me_id)
         ).scalars().all()
         return list(rows)
+
+
+# ---------------------------------------------------------------------------
+# Reels (short videos)
+# ---------------------------------------------------------------------------
+def public_reel(r, author, like_count, liked_by_me, comment_count=0, followed=False):
+    return {
+        "id": r.id,
+        "videoUrl": r.video_url,
+        "caption": r.caption or "",
+        "author": author,
+        "likeCount": int(like_count or 0),
+        "likedByMe": bool(liked_by_me),
+        "commentCount": int(comment_count or 0),
+        "views": int(getattr(r, "views", 0) or 0),
+        "followed": bool(followed),
+        "createdAt": _iso(r.created_at),
+    }
+
+
+def create_reel(user_id, video_url, caption):
+    with session_scope() as s:
+        r = Reel(user_id=user_id, video_url=video_url, caption=(caption or None), created_at=now_utc())
+        s.add(r)
+        s.flush()
+        author = public_user(s.get(User, user_id))
+        return public_reel(r, author, 0, False)
+
+
+def list_reels(me_id, before_id=None, limit=10, following_only=False):
+    with session_scope() as s:
+        q = select(Reel)
+        if following_only:
+            followee_ids = s.execute(
+                select(Follow.followee_id).where(Follow.follower_id == me_id)
+            ).scalars().all()
+            ids = list(followee_ids) + [me_id]
+            q = q.where(Reel.user_id.in_(ids))
+        if before_id:
+            q = q.where(Reel.id < before_id)
+        reels = s.execute(q.order_by(Reel.id.desc()).limit(limit)).scalars().all()
+        if not reels:
+            return []
+        rid_list = [r.id for r in reels]
+        uid_list = list({r.user_id for r in reels})
+        authors = {
+            u.id: public_user(u)
+            for u in s.execute(select(User).where(User.id.in_(uid_list))).scalars().all()
+        }
+        like_counts = dict(s.execute(
+            select(ReelLike.reel_id, func.count(ReelLike.user_id))
+            .where(ReelLike.reel_id.in_(rid_list)).group_by(ReelLike.reel_id)
+        ).all())
+        comment_counts = dict(s.execute(
+            select(ReelComment.reel_id, func.count(ReelComment.id))
+            .where(ReelComment.reel_id.in_(rid_list)).group_by(ReelComment.reel_id)
+        ).all())
+        my_likes = set(s.execute(
+            select(ReelLike.reel_id).where(ReelLike.reel_id.in_(rid_list), ReelLike.user_id == me_id)
+        ).scalars().all())
+        my_follows = set(s.execute(
+            select(Follow.followee_id).where(Follow.follower_id == me_id, Follow.followee_id.in_(uid_list))
+        ).scalars().all())
+        return [
+            public_reel(r, authors.get(r.user_id), like_counts.get(r.id, 0), r.id in my_likes,
+                        comment_counts.get(r.id, 0), r.user_id in my_follows)
+            for r in reels
+        ]
+
+
+def increment_reel_views(reel_id):
+    with session_scope() as s:
+        r = s.get(Reel, reel_id)
+        if r:
+            r.views = (r.views or 0) + 1
+            return int(r.views)
+        return 0
+
+
+def add_reel_comment(reel_id, user_id, text):
+    with session_scope() as s:
+        if not s.get(Reel, reel_id):
+            return None
+        c = ReelComment(reel_id=reel_id, user_id=user_id, text=text, created_at=now_utc())
+        s.add(c)
+        s.flush()
+        author = public_user(s.get(User, user_id))
+        return {
+            "id": c.id,
+            "text": c.text,
+            "author": author,
+            "createdAt": _iso(c.created_at),
+        }
+
+
+def list_reel_comments(reel_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(ReelComment).where(ReelComment.reel_id == reel_id).order_by(ReelComment.id.asc())
+        ).scalars().all()
+        if not rows:
+            return []
+        uids = list({c.user_id for c in rows})
+        authors = {u.id: public_user(u) for u in s.execute(select(User).where(User.id.in_(uids))).scalars().all()}
+        return [{"id": c.id, "text": c.text, "author": authors.get(c.user_id), "createdAt": _iso(c.created_at)} for c in rows]
+
+
+def delete_reel_comment(comment_id, user_id):
+    with session_scope() as s:
+        c = s.get(ReelComment, comment_id)
+        if not c or c.user_id != user_id:
+            return False
+        s.delete(c)
+        return True
+
+
+def toggle_follow(follower_id, followee_id):
+    if follower_id == followee_id:
+        return {"following": False}
+    with session_scope() as s:
+        existing = s.get(Follow, (follower_id, followee_id))
+        if existing:
+            s.delete(existing)
+            return {"following": False}
+        s.add(Follow(follower_id=follower_id, followee_id=followee_id, created_at=now_utc()))
+        return {"following": True}
+
+
+def toggle_reel_like(reel_id, user_id):
+    with session_scope() as s:
+        existing = s.get(ReelLike, (reel_id, user_id))
+        if existing:
+            s.delete(existing)
+            liked = False
+        else:
+            s.add(ReelLike(reel_id=reel_id, user_id=user_id, created_at=now_utc()))
+            liked = True
+        s.flush()
+        count = s.execute(
+            select(func.count(ReelLike.user_id)).where(ReelLike.reel_id == reel_id)
+        ).scalar_one()
+        return {"liked": liked, "likeCount": int(count or 0)}
+
+
+def delete_reel(reel_id, user_id):
+    with session_scope() as s:
+        r = s.get(Reel, reel_id)
+        if not r or r.user_id != user_id:
+            return False
+        s.delete(r)
+        return True
 
 
 # ---------------------------------------------------------------------------
