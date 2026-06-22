@@ -1572,7 +1572,13 @@ def on_poll_create(payload):
         return {"error": "Not authenticated."}
     payload = payload or {}
     cid = int(payload.get("conversationId") or 0)
-    conv = db.get_conversation_by_id(cid)
+    to_uid = int(payload.get("toUserId") or 0)
+    if cid:
+        conv = db.get_conversation_by_id(cid)
+    elif to_uid:
+        conv = db.get_or_create_conversation(uid, to_uid)
+    else:
+        return {"error": "No target."}
     if not conv or not db.is_conversation_member(conv, uid):
         return {"error": "Conversation not found."}
     emit_conv(conv, "poll:create", payload)
@@ -1586,7 +1592,13 @@ def on_poll_vote(payload):
         return {"error": "Not authenticated."}
     payload = payload or {}
     cid = int(payload.get("conversationId") or 0)
-    conv = db.get_conversation_by_id(cid)
+    to_uid = int(payload.get("toUserId") or 0)
+    if cid:
+        conv = db.get_conversation_by_id(cid)
+    elif to_uid:
+        conv = db.get_or_create_conversation(uid, to_uid)
+    else:
+        return {"error": "No target."}
     if not conv or not db.is_conversation_member(conv, uid):
         return {"error": "Conversation not found."}
     emit_conv(conv, "poll:vote", {**payload, "userId": uid})
