@@ -40,7 +40,6 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
-  const isCall = data.type === 'call';
   const title = data.title || 'Tea';
   const body = data.body || 'New message';
   event.waitUntil((async () => {
@@ -51,7 +50,7 @@ self.addEventListener('push', (event) => {
         else await self.navigator.clearAppBadge();
       }
     } catch (e) {}
-    if (!data.force && !isCall) {
+    if (!data.force) {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       // app is open AND in the foreground -> the in-app toast handles it; skip
       if (all.some((c) => c.visibilityState === 'visible')) return;
@@ -60,12 +59,12 @@ self.addEventListener('push', (event) => {
       body,
       icon: '/icon-192.png',
       badge: '/icon-192.png',
-      tag: isCall ? 'tea-call' : 'tea-message',
-      renotify: true,        // re-alert (sound + buzz) for each new message
-      silent: true,          // don't play the device's notification sound (in-app + toasts handle it)
-      vibrate: isCall ? [400, 200, 400, 200, 400, 200, 400] : [120, 60, 120, 60, 120],
-      requireInteraction: !!isCall,  // a call stays up until tapped
-      data: { conversationId: data.conversationId || null, type: data.type || null },
+      tag: 'tea-message',
+      renotify: true,
+      silent: true,
+      vibrate: [120, 60, 120, 60, 120],
+      requireInteraction: false,
+      data: { conversationId: data.conversationId || null },
     });
   })());
 });
