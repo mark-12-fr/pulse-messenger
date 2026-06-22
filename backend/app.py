@@ -1544,17 +1544,22 @@ def on_story_view(payload):
 # ---------------------------------------------------------------------------
 # WebRTC call signaling — relay to the other peer
 # ---------------------------------------------------------------------------
-CALL_EVENTS = ["call:invite", "call:answer", "call:ice", "call:reject", "call:cancel", "call:end", "call:busy", "call:dismiss"]
-for _ev in CALL_EVENTS:
-    exec(f'''@socketio.on("{_ev}")
-def on_{_ev.replace(":", "_")}(payload):
-    uid = sid_user.get(request.sid)
-    if not uid: return {{"error": "Not authenticated."}}
-    payload = payload or {{}}
-    to_uid = int(payload.get("toUserId") or 0)
-    if to_uid: emit_to_user(to_uid, "{_ev}", {{**payload, "fromUserId": uid}})
-    return {{"ok": True}}
-''')
+def _make_call_handler(ev):
+    def handler(payload):
+        uid = sid_user.get(request.sid)
+        if not uid:
+            return {"error": "Not authenticated."}
+        payload = payload or {}
+        to_uid = int(payload.get("toUserId") or 0)
+        if to_uid:
+            emit_to_user(to_uid, ev, {**payload, "fromUserId": uid})
+        return {"ok": True}
+    handler.__name__ = f"on_{ev.replace(':', '_')}"
+    return handler
+
+
+for _ev in ["call:invite", "call:answer", "call:ice", "call:reject", "call:cancel", "call:end", "call:busy", "call:dismiss"]:
+    socketio.on(_ev)(_make_call_handler(_ev))
 
 
 # ---------------------------------------------------------------------------
