@@ -300,16 +300,19 @@ def clear_note(user_id):
 
 def init_db():
     Base.metadata.create_all(engine)
-    # Migrate existing tables (safe to run multiple times)
+    # Migrate existing tables — safe to run multiple times (column already exists → error → ignored)
+    _migrate_column("stories", "text", "TEXT")
+    _migrate_column("stories", "bg_color", "VARCHAR(32)")
+    _migrate_column("users", "privacy", "TEXT")
+    _migrate_column("conversations", "description", "TEXT")
+    _migrate_column("messages", "consumed", "BOOLEAN DEFAULT FALSE")
+    _migrate_column("notes", "expires_at", "TIMESTAMPTZ")
+
+
+def _migrate_column(table, column, coldef):
     try:
         with engine.connect() as c:
-            c.execute(text("ALTER TABLE stories ADD COLUMN text TEXT"))
-            c.commit()
-    except Exception:
-        pass
-    try:
-        with engine.connect() as c:
-            c.execute(text("ALTER TABLE stories ADD COLUMN bg_color VARCHAR(32)"))
+            c.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}"))
             c.commit()
     except Exception:
         pass
