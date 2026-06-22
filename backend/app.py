@@ -195,8 +195,10 @@ def broadcast_presence(uid, up):
 def notify_friend_accepted(a, b):
     conv = db.get_or_create_conversation(a, b)
     ua, ub = db.get_user_by_id(a), db.get_user_by_id(b)
-    emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": is_online(b), "conversationId": conv["id"]}})
-    emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": is_online(a), "conversationId": conv["id"]}})
+    if ub:
+        emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": is_online(b), "conversationId": conv["id"]}})
+    if ua:
+        emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": is_online(a), "conversationId": conv["id"]}})
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +606,7 @@ def conversation_messages(cid):
 
     # --- 1-to-1 conversation ---
     partner_id = db.conversation_partner_id(conv, me_id)
-    partner = db.get_user_by_id(partner_id)
+    partner = db.get_user_by_id(partner_id) or {}
     if messages:
         emit_to_user(partner_id, "message:read",
                      {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": messages[-1]["id"]})
@@ -998,7 +1000,7 @@ def on_message_send(payload):
     envelope = {"message": msg, "conversationId": conv["id"], "isGroup": is_group, "sender": sender}
     if not is_group:
         recipient = db.get_user_by_id(db.conversation_partner_id(conv, uid))
-        envelope["participants"] = {str(uid): sender, str(recipient["id"]): recipient}
+        envelope["participants"] = {str(uid): sender, str(recipient["id"]): recipient} if recipient else {str(uid): sender}
 
     emit_conv(conv, "message:new", envelope)
 
@@ -1014,8 +1016,9 @@ def on_message_send(payload):
 
     # Push to recipients who aren't actively in the app and haven't muted this chat
     # (mentions override mute). Content-free: never put the message text in the push.
-    title = (conv.get("name") or "Group") if is_group else sender["displayName"]
-    bodytext = (f"{sender['displayName']} sent a message") if is_group else "Sent you a message"
+    sender_name = sender["displayName"] if sender else "Someone"
+    title = (conv.get("name") or "Group") if is_group else sender_name
+    bodytext = (f"{sender_name} sent a message") if is_group else "Sent you a message"
     for mid in db.conversation_member_ids(conv):
         if not mid or mid == uid or is_active(mid):
             continue
