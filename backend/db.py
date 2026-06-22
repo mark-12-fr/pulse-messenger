@@ -345,7 +345,7 @@ def public_user(u):
 def public_message(m):
     if not m:
         return None
-    return {
+    d = {
         "id": m.id,
         "conversationId": m.conversation_id,
         "senderId": m.sender_id,
@@ -359,6 +359,15 @@ def public_message(m):
         "reactions": [],
         "replyTo": None,
     }
+    if m.attachment_type == "poll" and m.body:
+        try:
+            parsed = json.loads(m.body)
+            if isinstance(parsed, dict) and "question" in parsed:
+                d["body"] = parsed.get("question", "")
+                d["poll"] = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return d
 
 
 def _msg_preview(m):
@@ -884,6 +893,30 @@ def unsend_message(message_id):
             select(MessageReaction).where(MessageReaction.message_id == message_id)
         ).scalars().all():
             s.delete(r)
+
+
+def update_poll_vote(message_id, user_id, option_index):
+    """Record a poll vote in the message body JSON. Returns the updated poll dict or None."""
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m or m.unsent or m.attachment_type != "poll" or not m.body:
+            return None
+        try:
+            poll = json.loads(m.body)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(poll, dict) or "options" not in poll:
+            return None
+        opt_count = len(poll["options"])
+        if option_index < 0 or option_index >= opt_count:
+            return None
+        votes = poll.get("votes", [])
+        # Remove any previous vote by this user
+        votes = [v for v in votes if v.get("userId") != user_id]
+        votes.append({"userId": user_id, "optionIndex": option_index})
+        poll["votes"] = votes
+        m.body = json.dumps(poll)
+        return poll
 
 
 def edit_message(message_id, new_body):

@@ -39,6 +39,7 @@ elif ASYNC_MODE == "gevent":
     except Exception:
         pass
 
+import json
 import random
 import re
 import time
@@ -1563,7 +1564,7 @@ for _ev in ["call:invite", "call:answer", "call:ice", "call:reject", "call:cance
 
 
 # ---------------------------------------------------------------------------
-# Poll create / vote — relay to conversation members
+# Poll — create as message, vote updates in-place
 # ---------------------------------------------------------------------------
 @socketio.on("poll:create")
 def on_poll_create(payload):
@@ -1581,8 +1582,19 @@ def on_poll_create(payload):
         return {"error": "No target."}
     if not conv or not db.is_conversation_member(conv, uid):
         return {"error": "Conversation not found."}
-    emit_conv(conv, "poll:create", payload)
-    return {"ok": True}
+    question = str(payload.get("question") or "").strip()[:200]
+    options = payload.get("options", [])
+    if not question or not isinstance(options, list) or len(options) < 2:
+        return {"error": "Question and at least 2 options required."}
+    options = [str(o).strip()[:80] for o in options if o and str(o).strip()]
+    if len(options) < 2:
+        return {"error": "At least 2 non-empty options required."}
+    poll_data = {"question": question, "options": options, "votes": []}
+    body_json = json.dumps(poll_data)
+    msg = db.create_message(conv["id"], uid, body=body_json, attachment_type="poll")
+    # The sender is in the conversation, so emit_conv includes them.
+    emit_conv(conv, "message:new", {"message": msg, "conversationId": conv["id"], "isGroup": bool(conv.get("is_group")), "sender": db.get_user_by_id(uid)})
+    return {"ok": True, "message": msg}
 
 
 @socketio.on("poll:vote")
@@ -1591,17 +1603,20 @@ def on_poll_vote(payload):
     if not uid:
         return {"error": "Not authenticated."}
     payload = payload or {}
-    cid = int(payload.get("conversationId") or 0)
-    to_uid = int(payload.get("toUserId") or 0)
-    if cid:
-        conv = db.get_conversation_by_id(cid)
-    elif to_uid:
-        conv = db.get_or_create_conversation(uid, to_uid)
-    else:
-        return {"error": "No target."}
+    mid = int(payload.get("messageId") or 0)
+    opt_idx = int(payload.get("optionIndex") or -1)
+    meta = db.get_message_meta(mid)
+    if not meta:
+        return {"error": "Message not found."}
+    conv = db.get_conversation_by_id(meta["conversationId"])
     if not conv or not db.is_conversation_member(conv, uid):
         return {"error": "Conversation not found."}
-    emit_conv(conv, "poll:vote", {**payload, "userId": uid})
+    if meta["senderId"] == uid:
+        return {"error": "Cannot vote on your own poll."}
+    updated = db.update_poll_vote(mid, uid, opt_idx)
+    if not updated:
+        return {"error": "Could not update poll."}
+    emit_conv(conv, "poll:update", {"messageId": mid, "conversationId": conv["id"], "poll": updated})
     return {"ok": True}
 
 
