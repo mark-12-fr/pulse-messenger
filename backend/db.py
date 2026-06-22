@@ -9,9 +9,10 @@ All helpers return plain dicts (never live ORM objects), so they are safe to use
 from both HTTP request handlers and Socket.IO event handlers.
 """
 
+import json
 import os
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
     create_engine, select, or_, and_, func, delete,
@@ -77,6 +78,7 @@ class User(Base):
     avatar_color = mapped_column(String(16), nullable=False)
     avatar_url = mapped_column(Text, nullable=True)
     token_version = mapped_column(Integer, nullable=False, default=0)
+    privacy = mapped_column(Text, nullable=True)  # JSON: { lastSeen: bool, ... }
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -101,6 +103,7 @@ class Conversation(Base):
     avatar_url = mapped_column(Text, nullable=True)      # group photo
     avatar_color = mapped_column(String(16), nullable=True)
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    description = mapped_column(Text, nullable=True)
     pinned_message_id = mapped_column(Integer, nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("user_a", "user_b", name="uq_conv_pair"),)
@@ -124,6 +127,7 @@ class Message(Base):
     attachment_name = mapped_column(Text, nullable=True)
     unsent = mapped_column(Boolean, nullable=False, default=False)
     edited = mapped_column(Boolean, nullable=False, default=False)
+    consumed = mapped_column(Boolean, nullable=False, default=False)
     reply_to_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
@@ -215,6 +219,53 @@ class StoryView(Base):
     viewer_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     viewed_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("story_id", "viewer_id", name="uq_story_view"),)
+
+
+class Note(Base):
+    __tablename__ = "notes"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    text = mapped_column(Text, nullable=True)
+    music = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Reel(Base):
+    __tablename__ = "reels"
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    video_url = mapped_column(Text, nullable=False)
+    caption = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (Index("idx_reels_user", "user_id", "created_at"),)
+
+
+class ReelView(Base):
+    __tablename__ = "reel_views"
+    id = mapped_column(Integer, primary_key=True)
+    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), nullable=False)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    viewed_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("reel_id", "user_id", name="uq_reel_view"),)
+
+
+class ReelLike(Base):
+    __tablename__ = "reel_likes"
+    id = mapped_column(Integer, primary_key=True)
+    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), nullable=False)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("reel_id", "user_id", name="uq_reel_like"),)
+
+
+class Follow(Base):
+    __tablename__ = "follows"
+    id = mapped_column(Integer, primary_key=True)
+    follower_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    following_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("follower_id", "following_id", name="uq_follow_pair"),)
 
 
 def init_db():
@@ -798,6 +849,13 @@ def edit_message(message_id, new_body):
         m.edited = True
 
 
+def mark_message_consumed(message_id):
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if m:
+            m.consumed = True
+
+
 def delete_conversation_messages(conversation_id):
     with session_scope() as s:
         for m in s.execute(
@@ -1348,3 +1406,216 @@ def cleanup_expired_stories():
         for st in expired:
             s.delete(st)
         return count
+
+
+# ---------------------------------------------------------------------------
+# Group helpers
+# ---------------------------------------------------------------------------
+def transfer_group(cid, new_owner_id):
+    with session_scope() as s:
+        c = s.get(Conversation, cid)
+        if c:
+            c.owner_id = new_owner_id
+
+
+def set_group_description(cid, desc):
+    with session_scope() as s:
+        c = s.get(Conversation, cid)
+        if c:
+            c.description = desc
+
+
+def get_read_by(conversation_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(MessageRead).where(MessageRead.conversation_id == conversation_id)
+        ).scalars().all()
+        result = []
+        for r in rows:
+            u = s.get(User, r.user_id)
+            if u:
+                result.append({"userId": r.user_id, "displayName": u.display_name, "lastReadMessageId": r.last_read_message_id})
+        return result
+
+
+def get_conversation_media(conversation_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(Message).where(
+                Message.conversation_id == conversation_id,
+                Message.attachment_type.in_(["image", "video"]),
+                Message.unsent == False,
+            ).order_by(Message.created_at.desc()).limit(200)
+        ).scalars().all()
+        return [public_message(m) for m in rows if m.attachment_url]
+
+
+# ---------------------------------------------------------------------------
+# User privacy
+# ---------------------------------------------------------------------------
+def set_user_privacy(uid, key, value):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if u:
+            priv = json.loads(u.privacy) if u.privacy else {}
+            priv[key] = value
+            u.privacy = json.dumps(priv)
+
+
+# ---------------------------------------------------------------------------
+# Notes (24h text/music status)
+# ---------------------------------------------------------------------------
+NOTE_TTL_HOURS = 24
+
+
+def get_user_note(uid):
+    with session_scope() as s:
+        rows = s.execute(
+            select(Note).where(Note.user_id == uid, Note.expires_at > now_utc())
+        ).scalars().all()
+        if not rows:
+            return None
+        return {"id": rows[0].id, "text": rows[0].text, "music": rows[0].music, "createdAt": _iso(rows[0].created_at)}
+
+
+def upsert_note(uid, text, music=None):
+    expires = now_utc() + timedelta(hours=NOTE_TTL_HOURS)
+    with session_scope() as s:
+        existing = s.execute(
+            select(Note).where(Note.user_id == uid)
+        ).scalars().first()
+        if existing:
+            existing.text = text
+            existing.music = music
+            existing.expires_at = expires
+            existing.created_at = now_utc()
+            s.flush()
+            return {"id": existing.id, "text": existing.text, "music": existing.music, "createdAt": _iso(existing.created_at)}
+        n = Note(user_id=uid, text=text, music=music, expires_at=expires, created_at=now_utc())
+        s.add(n)
+        s.flush()
+        return {"id": n.id, "text": n.text, "music": n.music, "createdAt": _iso(n.created_at)}
+
+
+def delete_user_note(uid):
+    with session_scope() as s:
+        s.execute(delete(Note).where(Note.user_id == uid))
+
+
+# ---------------------------------------------------------------------------
+# Music search (mock, returns placeholder results)
+# ---------------------------------------------------------------------------
+_MOCK_SONGS = [
+    {"id": 1, "title": "Blinding Lights", "artist": "The Weeknd", "url": "https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b"},
+    {"id": 2, "title": "Shape of You", "artist": "Ed Sheeran", "url": "https://open.spotify.com/track/7qiZfU4dY1lWllzX7mPBI3"},
+    {"id": 3, "title": "Bohemian Rhapsody", "artist": "Queen", "url": "https://open.spotify.com/track/3z8h0TU7ReD1IbRNYwR5kR"},
+    {"id": 4, "title": "Billie Jean", "artist": "Michael Jackson", "url": "https://open.spotify.com/track/5ChkMS8OtdzJeqyybCc9R5"},
+    {"id": 5, "title": "Hotel California", "artist": "Eagles", "url": "https://open.spotify.com/track/40riOy7x9W7GXjyGp4pjAv"},
+]
+
+
+def search_music(query):
+    q = query.lower().strip()
+    if not q:
+        return _MOCK_SONGS[:5]
+    return [s for s in _MOCK_SONGS if q in s["title"].lower() or q in s["artist"].lower()]
+
+
+# ---------------------------------------------------------------------------
+# Reels
+# ---------------------------------------------------------------------------
+def get_reels(uid, following=False, before=None):
+    with session_scope() as s:
+        q = select(Reel).order_by(Reel.created_at.desc())
+        if before:
+            q = q.where(Reel.id < before)
+        if following:
+            follow_ids = [r.id for r in s.execute(
+                select(Follow.following_id).where(Follow.follower_id == uid)
+            ).scalars().all()]
+            follow_ids.append(uid)
+            q = q.where(Reel.user_id.in_(follow_ids))
+        q = q.limit(10)
+        rows = s.execute(q).scalars().all()
+        reels = []
+        for r in rows:
+            u = s.get(User, r.user_id)
+            liked = s.execute(select(ReelLike).where(ReelLike.reel_id == r.id, ReelLike.user_id == uid)).scalar_one_or_none()
+            reels.append(_public_reel(r, u, liked=liked is not None))
+        return reels, len(rows) == 10
+
+
+def create_reel(uid, video_url, caption=None):
+    with session_scope() as s:
+        r = Reel(user_id=uid, video_url=video_url, caption=caption, created_at=now_utc())
+        s.add(r)
+        s.flush()
+        u = s.get(User, uid)
+        return _public_reel(r, u)
+
+
+def view_reel(rid, uid):
+    with session_scope() as s:
+        v = s.execute(select(ReelView).where(ReelView.reel_id == rid, ReelView.user_id == uid)).scalar_one_or_none()
+        if not v:
+            s.add(ReelView(reel_id=rid, user_id=uid, viewed_at=now_utc()))
+            s.flush()
+        count = s.execute(select(func.count()).select_from(ReelView).where(ReelView.reel_id == rid)).scalar() or 0
+        return count
+
+
+def toggle_reel_like(rid, uid):
+    with session_scope() as s:
+        existing = s.execute(select(ReelLike).where(ReelLike.reel_id == rid, ReelLike.user_id == uid)).scalar_one_or_none()
+        if existing:
+            s.delete(existing)
+            liked = False
+        else:
+            s.add(ReelLike(reel_id=rid, user_id=uid, created_at=now_utc()))
+            liked = True
+        count = s.execute(select(func.count()).select_from(ReelLike).where(ReelLike.reel_id == rid)).scalar() or 0
+        return liked, count
+
+
+def delete_reel(rid, uid):
+    with session_scope() as s:
+        r = s.get(Reel, rid)
+        if r and r.user_id == uid:
+            s.delete(r)
+            return True
+        return False
+
+
+def _public_reel(r, user, liked=False):
+    views = 0
+    likes = 0
+    with session_scope() as s:
+        views = s.execute(select(func.count()).select_from(ReelView).where(ReelView.reel_id == r.id)).scalar() or 0
+        likes = s.execute(select(func.count()).select_from(ReelLike).where(ReelLike.reel_id == r.id)).scalar() or 0
+    return {
+        "id": r.id,
+        "videoUrl": r.video_url,
+        "caption": r.caption,
+        "createdAt": _iso(r.created_at),
+        "views": views,
+        "likes": likes,
+        "liked": liked,
+        "author": public_user(user) if user else {"id": r.user_id, "displayName": "User"},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Follow
+# ---------------------------------------------------------------------------
+def toggle_follow(follower_id, following_id):
+    if follower_id == following_id:
+        return False
+    with session_scope() as s:
+        existing = s.execute(
+            select(Follow).where(Follow.follower_id == follower_id, Follow.following_id == following_id)
+        ).scalar_one_or_none()
+        if existing:
+            s.delete(existing)
+            return False
+        s.add(Follow(follower_id=follower_id, following_id=following_id, created_at=now_utc()))
+        return True

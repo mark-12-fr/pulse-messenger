@@ -326,8 +326,9 @@
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
     try {
-      if (window.qrcode) {
-        const qr = window.qrcode(0, 'M');
+      const QC = window.QRCode;
+      if (QC) {
+        const qr = new QC(0, 'M');
         qr.addData(link); qr.make();
         overlay.querySelector('#invite-qr').innerHTML = qr.createImgTag(5, 12);
       } else { overlay.querySelector('#invite-qr').remove(); }
@@ -580,12 +581,14 @@
   function renderChats() {
     updateAppBadge();
     const box = $('#tab-chats');
+    const tray = box.querySelector('.story-tray');
     const convs = Array.from(state.conversations.values()).sort((a, b) => {
       if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1; // pinned first
       return (b.lastMessage?.createdAt || '').localeCompare(a.lastMessage?.createdAt || '');
     });
     if (!convs.length) {
       box.innerHTML = `<div class="empty-note">No conversations yet.<br>Add a friend and say hi! 👋</div>`;
+      if (tray) box.prepend(tray);
       return;
     }
     box.innerHTML = convs
@@ -797,7 +800,8 @@
         <div class="row-actions">${relButton(u)}</div>
       </div>`
         )
-        .join('');
+      .join('');
+    if (tray) box.prepend(tray);
   }
 
   async function sendFriendRequest(userId, btn) {
@@ -944,7 +948,7 @@
       renderMessages();
 
       // clear unread locally
-      if (conv) { conv.unread = 0; renderChats(); }
+      if (conv) conv.unread = 0;
     } catch (e) {
       $('#messages').innerHTML = `<div class="empty-note">Could not load messages.</div>`;
     }
