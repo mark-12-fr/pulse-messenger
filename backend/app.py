@@ -195,10 +195,8 @@ def broadcast_presence(uid, up):
 def notify_friend_accepted(a, b):
     conv = db.get_or_create_conversation(a, b)
     ua, ub = db.get_user_by_id(a), db.get_user_by_id(b)
-    if ub:
-        emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": is_online(b), "conversationId": conv["id"]}})
-    if ua:
-        emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": is_online(a), "conversationId": conv["id"]}})
+    emit_to_user(a, "friend:accepted", {"friend": {**ub, "online": is_online(b), "conversationId": conv["id"]}})
+    emit_to_user(b, "friend:accepted", {"friend": {**ua, "online": is_online(a), "conversationId": conv["id"]}})
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +604,7 @@ def conversation_messages(cid):
 
     # --- 1-to-1 conversation ---
     partner_id = db.conversation_partner_id(conv, me_id)
-    partner = db.get_user_by_id(partner_id) or {}
+    partner = db.get_user_by_id(partner_id)
     if messages:
         emit_to_user(partner_id, "message:read",
                      {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": messages[-1]["id"]})
@@ -771,203 +769,8 @@ def serve_upload(filename):
 
 
 # ---------------------------------------------------------------------------
-# Group management endpoints
+# Stories (My Day)
 # ---------------------------------------------------------------------------
-@app.post("/api/groups/<int:cid>/members/<int:uid>/remove")
-@auth_required
-def group_member_remove(cid, uid):
-    conv = db.get_conversation_by_id(cid)
-    if not conv or not conv.get("is_group"):
-        return jsonify(error="Not a group."), 404
-    members = db.conversation_member_ids(conv)
-    if g.user["id"] not in members:
-        return jsonify(error="Not a member."), 403
-    owner_id = conv.get("owner_id")
-    if owner_id and owner_id != g.user["id"]:
-        return jsonify(error="Only the admin can remove members."), 403
-    db.remove_group_member(cid, uid)
-    group = db.public_conversation_meta(conv, g.user["id"])
-    emit_conv(conv, "group:updated", {"group": group})
-    return jsonify(group=group)
-
-
-@app.post("/api/groups/<int:cid>/transfer")
-@auth_required
-def group_transfer(cid):
-    data = request.get_json(silent=True) or {}
-    new_owner = int(data.get("userId") or 0)
-    conv = db.get_conversation_by_id(cid)
-    if not conv or not conv.get("is_group"):
-        return jsonify(error="Not a group."), 404
-    if conv.get("owner_id") != g.user["id"]:
-        return jsonify(error="Only the admin can transfer."), 403
-    db.transfer_group(cid, new_owner)
-    group = db.public_conversation_meta(conv, g.user["id"])
-    emit_conv(conv, "group:updated", {"group": group})
-    return jsonify(group=group)
-
-
-@app.post("/api/groups/<int:cid>/description")
-@auth_required
-def group_description(cid):
-    data = request.get_json(silent=True) or {}
-    desc = str(data.get("description") or "").strip()[:500]
-    conv = db.get_conversation_by_id(cid)
-    if not conv or not conv.get("is_group"):
-        return jsonify(error="Not a group."), 404
-    members = db.conversation_member_ids(conv)
-    if g.user["id"] not in members:
-        return jsonify(error="Not a member."), 403
-    db.set_group_description(cid, desc)
-    group = db.public_conversation_meta(conv, g.user["id"])
-    emit_conv(conv, "group:updated", {"group": group})
-    return jsonify(group=group)
-
-
-@app.get("/api/messages/<int:mid>/seen")
-@auth_required
-def message_seen(mid):
-    meta = db.get_message_meta(mid)
-    if not meta:
-        return jsonify(error="Message not found."), 404
-    seen_by = db.get_read_by(meta["conversationId"])
-    return jsonify(seenBy=seen_by)
-
-
-@app.get("/api/conversations/<int:cid>/media")
-@auth_required
-def conversation_media(cid):
-    conv = db.get_conversation_by_id(cid)
-    if not conv or not db.is_conversation_member(conv, g.user["id"]):
-        return jsonify(error="Not found."), 404
-    media = db.get_conversation_media(cid)
-    return jsonify(media=media)
-
-
-@app.post("/api/me/privacy")
-@auth_required
-def me_privacy():
-    data = request.get_json(silent=True) or {}
-    for key, val in data.items():
-        if key in ("lastSeen", "readReceipts", "online"):
-            db.set_user_privacy(g.user["id"], key, bool(val))
-    me = db.get_user_by_id(g.user["id"])
-    return jsonify(me=me)
-
-
-# ---------------------------------------------------------------------------
-# Notes (status text)
-# ---------------------------------------------------------------------------
-@app.get("/api/note")
-@auth_required
-def get_note():
-    note = db.get_user_note(g.user["id"])
-    return jsonify(note=note)
-
-
-@app.post("/api/note")
-@auth_required
-def set_note():
-    data = request.get_json(silent=True) or {}
-    text = str(data.get("text") or "").strip()[:500] or None
-    music = data.get("music")
-    note = db.upsert_note(g.user["id"], text, music)
-    return jsonify(note=note)
-
-
-@app.delete("/api/note")
-@auth_required
-def delete_note():
-    db.delete_user_note(g.user["id"])
-    return jsonify(ok=True)
-
-
-# ---------------------------------------------------------------------------
-# Music search (mock — replace with Spotify/Apple Music API)
-# ---------------------------------------------------------------------------
-@app.get("/api/music/search")
-@auth_required
-def music_search():
-    q = request.args.get("q", "").strip()
-    results = db.search_music(q) if q else []
-    return jsonify(results=results)
-
-
-# ---------------------------------------------------------------------------
-# Reels (short video feed)
-# ---------------------------------------------------------------------------
-@app.get("/api/reels")
-@auth_required
-def get_reels():
-    following = request.args.get("following")
-    before = request.args.get("before")
-    reels, has_more = db.get_reels(g.user["id"], following=bool(following), before=int(before) if before else None)
-    return jsonify(reels=reels, hasMore=has_more)
-
-
-@app.post("/api/reels")
-@auth_required
-def create_reel():
-    data = request.get_json(silent=True) or {}
-    video_url = str(data.get("videoUrl") or "").strip()
-    caption = str(data.get("caption") or "").strip()[:500] or None
-    if not video_url:
-        return jsonify(error="videoUrl required."), 400
-    reel = db.create_reel(g.user["id"], video_url, caption)
-    return jsonify(reel=reel)
-
-
-@app.post("/api/reels/<int:rid>/view")
-@auth_required
-def view_reel(rid):
-    views = db.view_reel(rid, g.user["id"])
-    return jsonify(views=views)
-
-
-@app.post("/api/reels/<int:rid>/like")
-@auth_required
-def like_reel(rid):
-    liked, like_count = db.toggle_reel_like(rid, g.user["id"])
-    return jsonify(liked=liked, likeCount=like_count)
-
-
-@app.delete("/api/reels/<int:rid>")
-@auth_required
-def delete_reel(rid):
-    ok = db.delete_reel(rid, g.user["id"])
-    if not ok:
-        return jsonify(error="Not found or not yours."), 404
-    return jsonify(ok=True)
-
-
-@app.post("/api/users/<int:uid>/follow")
-@auth_required
-def toggle_follow(uid):
-    following = db.toggle_follow(g.user["id"], uid)
-    return jsonify(following=following)
-
-
-# ---------------------------------------------------------------------------
-# Stories (My Day) — /api/stories/ (canonical) and /api/status/ (legacy)
-# ---------------------------------------------------------------------------
-def _feed_for(uid):
-    """Build the status feed object (stories + note)."""
-    stories = db.get_friends_stories(uid)
-    note = db.get_user_note(uid)
-    feed = []
-    seen = set()
-    for st in stories:
-        gid = st.get("userId")
-        if gid and gid not in seen:
-            seen.add(gid)
-            feed.append({"user": st.get("user"), "statuses": [st], "note": note if gid == uid else None})
-    me_note = db.get_user_note(uid)
-    if me_note and uid not in seen:
-        me = db.get_user_by_id(uid)
-        feed.insert(0, {"user": me, "statuses": [], "note": me_note})
-    return feed
-
-
 @app.post("/api/stories")
 @auth_required
 def create_story():
@@ -978,9 +781,10 @@ def create_story():
     if not media_url or media_type not in ("image", "video"):
         return jsonify(error="mediaUrl and mediaType (image|video) required."), 400
     story = db.create_story(g.user["id"], media_url, media_type, caption)
+    # Notify friends via socket so their story tray updates
     for fid in [f["id"] for f in db.list_friends(g.user["id"])]:
         emit_to_user(fid, "story:new", {"story": story})
-    return jsonify(ok=True)
+    return jsonify(story=story)
 
 
 @app.get("/api/stories/tray")
@@ -988,65 +792,6 @@ def create_story():
 def stories_tray():
     stories = db.get_friends_stories(g.user["id"])
     return jsonify(stories=stories)
-
-
-@app.get("/api/status")
-@auth_required
-def status_feed():
-    feed = _feed_for(g.user["id"])
-    return jsonify(feed=feed)
-
-
-@app.post("/api/status")
-@auth_required
-def create_status():
-    data = request.get_json(silent=True) or {}
-    text = str(data.get("text") or "").strip()[:500] or None
-    media_url = str(data.get("mediaUrl") or "").strip()
-    if media_url:
-        media_type = str(data.get("mediaType") or "image").strip()
-        story = db.create_story(g.user["id"], media_url, media_type)
-        for fid in [f["id"] for f in db.list_friends(g.user["id"])]:
-            emit_to_user(fid, "story:new", {"story": story})
-        return jsonify(ok=True)
-    note = db.upsert_note(g.user["id"], text)
-    return jsonify(note=note)
-
-
-@app.get("/api/status/<int:st_id>")
-@auth_required
-def status_detail(st_id):
-    story = db.get_story_by_id(st_id)
-    if not story:
-        return jsonify(error="Not found."), 404
-    viewers = db.get_story_viewers(st_id)
-    story["viewers"] = viewers
-    return jsonify(story=story)
-
-
-@app.get("/api/status/<int:st_id>/viewers")
-@auth_required
-def status_viewers(st_id):
-    viewers = db.get_story_viewers(st_id)
-    return jsonify(viewers=viewers)
-
-
-@app.post("/api/status/<int:st_id>/view")
-@auth_required
-def status_view(st_id):
-    is_new = db.view_story(st_id, g.user["id"])
-    return jsonify(viewed=True, newView=is_new)
-
-
-@app.delete("/api/status/<int:st_id>")
-@auth_required
-def status_delete(st_id):
-    ok = db.delete_story(st_id, g.user["id"])
-    if not ok:
-        return jsonify(error="Not found or not yours."), 404
-    for fid in [f["id"] for f in db.list_friends(g.user["id"])]:
-        emit_to_user(fid, "story:delete", {"storyId": st_id})
-    return jsonify(ok=True)
 
 
 @app.get("/api/stories/me")
@@ -1213,7 +958,7 @@ def on_message_send(payload):
     if not body and not attachment:
         return {"error": "Empty message."}
 
-    sender = db.get_user_by_id(uid) or {"id": uid, "displayName": "Unknown", "username": "unknown"}
+    sender = db.get_user_by_id(uid)
 
     # --- group message (client passes conversationId of a group) ---
     if conv_id:
@@ -1447,68 +1192,6 @@ def on_conversation_delete(payload):
     db.delete_conversation_messages(cid)
     data = {"conversationId": cid}
     emit_conv(conv, "conversation:cleared", data)
-    return {"ok": True}
-
-
-# ---------------------------------------------------------------------------
-# WebRTC call signaling — relay to the other peer
-# ---------------------------------------------------------------------------
-CALL_EVENTS = ["call:invite", "call:answer", "call:ice", "call:reject", "call:cancel", "call:end", "call:busy", "call:dismiss"]
-for _ev in CALL_EVENTS:
-    exec(f'''@socketio.on("{_ev}")
-def on_{_ev.replace(":", "_")}(payload):
-    uid = sid_user.get(request.sid)
-    if not uid: return {{"error": "Not authenticated."}}
-    payload = payload or {{}}
-    to_uid = int(payload.get("toUserId") or 0)
-    if to_uid: emit_to_user(to_uid, "{_ev}", {{**payload, "fromUserId": uid}})
-    return {{"ok": True}}
-''')
-
-
-# ---------------------------------------------------------------------------
-# Poll create / vote — relay to conversation members
-# ---------------------------------------------------------------------------
-@socketio.on("poll:create")
-def on_poll_create(payload):
-    uid = sid_user.get(request.sid)
-    if not uid:
-        return {"error": "Not authenticated."}
-    payload = payload or {}
-    cid = int(payload.get("conversationId") or 0)
-    conv = db.get_conversation_by_id(cid)
-    if not conv or not db.is_conversation_member(conv, uid):
-        return {"error": "Conversation not found."}
-    emit_conv(conv, "poll:create", payload)
-    return {"ok": True}
-
-
-@socketio.on("poll:vote")
-def on_poll_vote(payload):
-    uid = sid_user.get(request.sid)
-    if not uid:
-        return {"error": "Not authenticated."}
-    payload = payload or {}
-    cid = int(payload.get("conversationId") or 0)
-    conv = db.get_conversation_by_id(cid)
-    if not conv or not db.is_conversation_member(conv, uid):
-        return {"error": "Conversation not found."}
-    emit_conv(conv, "poll:vote", {**payload, "userId": uid})
-    return {"ok": True}
-
-
-@socketio.on("message:view-once")
-def on_message_view_once(payload):
-    uid = sid_user.get(request.sid)
-    if not uid:
-        return {"error": "Not authenticated."}
-    payload = payload or {}
-    mid = int(payload.get("messageId") or 0)
-    meta = db.get_message_meta(mid)
-    if not meta or meta["senderId"] == uid:
-        return {"error": "Not allowed."}
-    db.mark_message_consumed(mid)
-    emit_to_user(meta["senderId"], "message:consumed", {"messageId": mid, "byUserId": uid})
     return {"ok": True}
 
 
