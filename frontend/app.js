@@ -426,6 +426,16 @@
       $('#search-clear').classList.remove('hidden');
       doSearch(u);
     }
+    // One-time auto-prompt for push notifications
+    if (!localStorage.getItem('push_prompted')) {
+      localStorage.setItem('push_prompted', '1');
+      setTimeout(async () => {
+        const st = await pushState();
+        if (st === 'off') {
+          await enablePush();
+        }
+      }, 3000);
+    }
   }
 
   function showChatsSkeleton() {
