@@ -989,6 +989,9 @@ def on_message_send(payload):
         attachment.get("name") if attachment else None,
         reply_to_id=reply_to_id,
     )
+    client_id = payload.get("clientId")
+    if client_id:
+        msg["clientId"] = client_id
     db.mark_read(conv["id"], uid, msg["id"])
 
     is_group = bool(conv.get("is_group"))
