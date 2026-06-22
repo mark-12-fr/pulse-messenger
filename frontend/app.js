@@ -503,32 +503,6 @@
     if (state.socket && state.socket.connected) {
       state.socket.emit('presence:active', { active: document.visibilityState === 'visible' });
     }
-    // Cleanup audio when backgrounded to prevent battery drain and resource leak
-    if (document.visibilityState === 'hidden') {
-      stopNotePreview();
-      stopRinging();
-      stopRingAudio();
-    }
-  });
-
-  // Cleanup all audio resources when page unloads
-  window.addEventListener('beforeunload', () => {
-    stopNotePreview();
-    destroyNotePreview();
-    stopRinging();
-    destroyRingtoneEl();
-    stopRingAudio();
-    if (callAudioCtx && callAudioCtx.state !== 'closed') {
-      try { callAudioCtx.close(); } catch (e) {}
-    }
-    callAudioCtx = null;
-  });
-
-  // Also handle pagehide for mobile background tabs
-  window.addEventListener('pagehide', () => {
-    stopNotePreview();
-    stopRinging();
-    stopRingAudio();
   });
 
   // ============================================================
@@ -921,7 +895,6 @@
   async function openConversation(conversationId, peerId) {
     const peer = state.friends.get(peerId);
     if (!peer) return;
-    stopNotePreview(); // Stop music preview when switching conversations
     saveDraft(); // keep what was typed in the chat we're leaving
     if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
@@ -981,7 +954,6 @@
 
   async function openGroup(cid) {
     const conv = state.conversations.get(cid);
-    stopNotePreview(); // Stop music preview when switching conversations
     saveDraft();
     if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
@@ -3424,29 +3396,130 @@
   let activeCall = null;
   let ringVibTimer = null;
 
+  // Unlock audio on the first interaction so an incoming ringtone can play later.
+  ['pointerdown', 'keydown', 'touchend'].forEach((ev) =>
+    window.addEventListener(ev, unlockCallAudio, { once: true, passive: true }));
+  function unlockCallAudio() { ensureAudioCtx(); primeRingtone(); }
+
+  // A real, loud, looping ringtone for INCOMING calls (Messenger-style). It's a
+  // synthesized WAV (no asset needed) played through an <audio> element, which
+  // loops reliably and is loud. Primed on the first tap so it can ring later.
   let ringtoneEl = null;
-  function destroyRingtoneEl() {
-    if (ringtoneEl) {
-      try {
-        ringtoneEl.pause();
-        ringtoneEl.currentTime = 0;
-        ringtoneEl.src = '';
-        ringtoneEl.removeAttribute('src');
-        const newEl = ringtoneEl.cloneNode(false);
-        if (ringtoneEl.parentNode) ringtoneEl.parentNode.replaceChild(newEl, ringtoneEl);
-      } catch (e) {}
-      ringtoneEl = null;
+  function buildRingtoneUri() {
+    const sr = 22050, dur = 3.0, n = Math.floor(sr * dur);
+    const ramp = (x, len) => Math.max(0, Math.min(1, Math.min(x, len - x, 0.05) / 0.05));
+    const burst = (t) => (t >= 0 && t <= 0.4) ? ramp(t, 0.4) : 0; // one 0.4s ring
+    const ab = new ArrayBuffer(44 + n * 2);
+    const dv = new DataView(ab);
+    let p = 0;
+    const ws = (s) => { for (let i = 0; i < s.length; i++) dv.setUint8(p++, s.charCodeAt(i)); };
+    ws('RIFF'); dv.setUint32(p, 36 + n * 2, true); p += 4; ws('WAVE');
+    ws('fmt '); dv.setUint32(p, 16, true); p += 4; dv.setUint16(p, 1, true); p += 2;
+    dv.setUint16(p, 1, true); p += 2; dv.setUint32(p, sr, true); p += 4;
+    dv.setUint32(p, sr * 2, true); p += 4; dv.setUint16(p, 2, true); p += 2; dv.setUint16(p, 16, true); p += 2;
+    ws('data'); dv.setUint32(p, n * 2, true); p += 4;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const amp = burst(t) + burst(t - 0.6); // "ring-ring" then a gap before the loop repeats
+      let s = 0;
+      if (amp > 0) s = (Math.sin(2 * Math.PI * 660 * t) * 0.5 + Math.sin(2 * Math.PI * 524 * t) * 0.5) * amp * 0.72;
+      dv.setInt16(p, Math.max(-1, Math.min(1, s)) * 32767, true); p += 2;
     }
+    let bin = ''; const bytes = new Uint8Array(ab);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return 'data:audio/wav;base64,' + btoa(bin);
   }
+  function ensureRingtoneEl() {
+    if (!ringtoneEl) {
+      try { ringtoneEl = new Audio(buildRingtoneUri()); ringtoneEl.loop = true; ringtoneEl.volume = 1; }
+      catch (e) { ringtoneEl = null; }
+    }
+    return ringtoneEl;
+  }
+  function primeRingtone() {
+    const el = ensureRingtoneEl(); if (!el || el._primed) return;
+    el._primed = true;
+    // Unlock the element for later autoplay — must be SILENT (muted alone isn't
+    // reliable on iOS, so force volume 0 too), then stop and restore.
+    el.muted = true; el.volume = 0;
+    const restore = () => { el.pause(); el.currentTime = 0; el.muted = false; el.volume = 1; };
+    const p = el.play();
+    if (p && p.then) p.then(restore).catch(restore); else restore();
+  }
+
+  // ---- call tones (generated with Web Audio — no asset, works offline) ----
   let callAudioCtx = null, ringStop = null, ringAudioTimer = null;
+  function ensureAudioCtx() {
+    try {
+      if (!callAudioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        callAudioCtx = new AC();
+      }
+      if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+      return callAudioCtx;
+    } catch (e) { return null; }
+  }
+
+  function chime(ctx, freqs, t0, dur, vol) {
+    const g = ctx.createGain();
+    g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.03);
+    g.gain.setValueAtTime(vol, t0 + Math.max(0.05, dur - 0.06));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    freqs.forEach((f) => {
+      const o = ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = f;
+      o.connect(g); o.start(t0); o.stop(t0 + dur + 0.03);
+    });
+  }
   function stopRingAudio() {
     if (ringStop) { try { ringStop(); } catch (e) {} ringStop = null; }
     clearTimeout(ringAudioTimer); ringAudioTimer = null;
   }
-  function startRingback() {}
-  function startRingtoneAudio() {}
-  function playConnectTone() {}
-  function playEndTone() {}
+  // Outgoing: the classic, gentle dual-tone ringback the caller hears.
+  function startRingback() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    stopRingAudio();
+    let stopped = false;
+    const loop = () => {
+      if (stopped) return;
+      chime(ctx, [440, 480], ctx.currentTime + 0.04, 1.2, 0.06);
+      ringAudioTimer = setTimeout(loop, 3200);
+    };
+    loop();
+    ringStop = () => { stopped = true; };
+  }
+  // Incoming: a pleasant rising chime the callee hears.
+  function startRingtoneAudio() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    stopRingAudio();
+    let stopped = false;
+    const loop = () => {
+      if (stopped) return;
+      const t = ctx.currentTime + 0.04;
+      chime(ctx, [587.33], t, 0.22, 0.10);
+      chime(ctx, [739.99], t + 0.24, 0.22, 0.10);
+      chime(ctx, [880.00], t + 0.48, 0.36, 0.10);
+      ringAudioTimer = setTimeout(loop, 2000);
+    };
+    loop();
+    ringStop = () => { stopped = true; };
+  }
+  // Short confirmation blips when a call connects / ends (professional polish).
+  function playConnectTone() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    chime(ctx, [660], t, 0.12, 0.09);
+    chime(ctx, [880], t + 0.13, 0.18, 0.09);
+  }
+  function playEndTone() {
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    chime(ctx, [520], t, 0.12, 0.08);
+    chime(ctx, [392], t + 0.13, 0.22, 0.08);
+  }
 
   function callSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
@@ -3656,19 +3729,8 @@
     closeCallUI(reason);
   }
 
-  
   function endCallCleanup() {
     stopRinging();
-    // Destroy audio resources completely
-    destroyRingtoneEl();
-    // Close AudioContext to free memory (can be recreated if needed)
-    if (callAudioCtx && callAudioCtx.state !== 'closed') {
-      try { callAudioCtx.close(); } catch (e) {}
-    }
-    callAudioCtx = null;
-    ringStop = null;
-    ringAudioTimer = null;
-    
     if (!activeCall) return;
     try { clearInterval(activeCall.timer); } catch (e) {}
     try { clearTimeout(activeCall.dropTimer); } catch (e) {}
@@ -3773,6 +3835,15 @@
   function startRinging() {        // callee: loud looping ringtone + vibration
     haptic(60);
     try { if (navigator.vibrate) ringVibTimer = setInterval(() => navigator.vibrate([400, 220, 400]), 1500); } catch (e) {}
+    // primary: the loud looping ringtone; fall back to the Web Audio chime if blocked
+    const el = ensureRingtoneEl();
+    if (el) {
+      el.muted = false; el.volume = 1; el.currentTime = 0;
+      const pr = el.play();
+      if (pr && pr.catch) pr.catch(() => startRingtoneAudio());
+    } else {
+      startRingtoneAudio();
+    }
   }
   function stopRinging() {          // stops any ring (incoming OR outgoing) + vibration
     if (ringtoneEl) { try { ringtoneEl.pause(); ringtoneEl.currentTime = 0; } catch (e) {} }
@@ -3780,7 +3851,6 @@
     if (ringVibTimer) { clearInterval(ringVibTimer); ringVibTimer = null; }
     try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
   }
-
 
   function setCallButtonsVisible(show) {
     ['call-audio-btn', 'call-video-btn'].forEach((id) => {
@@ -5259,28 +5329,7 @@
     a._url = url; a.src = url;
     a.play().then(() => { if (el) el.classList.add('playing'); }).catch(() => {});
   }
-  function stopNotePreview() { 
-    if (_notePreview) { 
-      _notePreview.pause(); 
-      _notePreview._url = null; 
-    } 
-  }
-  
-  // Properly destroy note preview audio element and free resources
-  function destroyNotePreview() {
-    if (_notePreview) {
-      try {
-        _notePreview.pause();
-        _notePreview.currentTime = 0;
-        _notePreview.src = '';
-        _notePreview.removeAttribute('src');
-        // Cloning removes all event listeners cleanly
-        const newEl = _notePreview.cloneNode(false);
-        if (_notePreview.parentNode) _notePreview.parentNode.replaceChild(newEl, _notePreview);
-      } catch (e) {}
-      _notePreview = null;
-    }
-  }
+  function stopNotePreview() { if (_notePreview) { _notePreview.pause(); _notePreview._url = null; } }
 
   // animated equalizer bars — shown on notes that have a song (Messenger-style)
   const EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
