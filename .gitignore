@@ -1,9 +1,13 @@
 # ---- Python (backend) ----
 __pycache__/
 *.pyc
+.venv/
+venv/
+env/
 backend/.venv/
 backend/venv/
 backend/.env
+data/
 backend/data/
 backend/uploads/*
 !backend/uploads/.gitkeep
