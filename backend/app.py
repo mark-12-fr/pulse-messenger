@@ -726,6 +726,88 @@ def leave_group(cid):
     return jsonify(ok=True)
 
 
+@app.post("/api/groups/<int:cid>/members/<int:uid>/remove")
+@auth_required
+def group_member_remove(cid, uid):
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group"):
+        return jsonify(error="Not a group."), 404
+    members = db.conversation_member_ids(conv)
+    if g.user["id"] not in members:
+        return jsonify(error="Not a member."), 403
+    owner_id = conv.get("owner_id")
+    if owner_id and owner_id != g.user["id"]:
+        return jsonify(error="Only the admin can remove members."), 403
+    db.remove_group_member(cid, uid)
+    group = db.public_conversation_meta(conv, g.user["id"])
+    emit_conv(conv, "group:updated", {"group": group})
+    return jsonify(group=group)
+
+
+@app.post("/api/groups/<int:cid>/transfer")
+@auth_required
+def group_transfer(cid):
+    data = request.get_json(silent=True) or {}
+    new_owner = int(data.get("userId") or 0)
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group"):
+        return jsonify(error="Not a group."), 404
+    if conv.get("owner_id") != g.user["id"]:
+        return jsonify(error="Only the admin can transfer."), 403
+    db.transfer_group(cid, new_owner)
+    group = db.public_conversation_meta(conv, g.user["id"])
+    emit_conv(conv, "group:updated", {"group": group})
+    return jsonify(group=group)
+
+
+@app.post("/api/groups/<int:cid>/description")
+@auth_required
+def group_description(cid):
+    data = request.get_json(silent=True) or {}
+    desc = str(data.get("description") or "").strip()[:500]
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not conv.get("is_group"):
+        return jsonify(error="Not a group."), 404
+    members = db.conversation_member_ids(conv)
+    if g.user["id"] not in members:
+        return jsonify(error="Not a member."), 403
+    db.set_group_description(cid, desc)
+    group = db.public_conversation_meta(conv, g.user["id"])
+    emit_conv(conv, "group:updated", {"group": group})
+    return jsonify(group=group)
+
+
+@app.get("/api/messages/<int:mid>/seen")
+@auth_required
+def message_seen(mid):
+    meta = db.get_message_meta(mid)
+    if not meta:
+        return jsonify(error="Message not found."), 404
+    seen_by = db.get_read_by(meta["conversationId"])
+    return jsonify(seenBy=seen_by)
+
+
+@app.get("/api/conversations/<int:cid>/media")
+@auth_required
+def conversation_media(cid):
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not db.is_conversation_member(conv, g.user["id"]):
+        return jsonify(error="Not found."), 404
+    media = db.get_conversation_media(cid)
+    return jsonify(media=media)
+
+
+@app.post("/api/me/privacy")
+@auth_required
+def me_privacy():
+    data = request.get_json(silent=True) or {}
+    for key, val in data.items():
+        if key in ("lastSeen", "readReceipts", "online"):
+            db.set_user_privacy(g.user["id"], key, bool(val))
+    me = db.get_user_by_id(g.user["id"])
+    return jsonify(me=me)
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -843,6 +925,13 @@ def music_search():
         return jsonify(results=_itunes_songs(q, 18))
     except Exception:
         return jsonify(results=[])
+
+
+@app.get("/api/note")
+@auth_required
+def get_note():
+    note = db.get_user_note(g.user["id"])
+    return jsonify(note=note)
 
 
 @app.post("/api/note")
@@ -965,6 +1054,17 @@ def create_status():
         return jsonify(error="Empty status."), 400
     st = db.create_story(g.user["id"], media_url=media_url, media_type=media_type, text=text, bg_color=bg)
     return jsonify(status=st)
+
+
+@app.get("/api/status/<int:sid>")
+@auth_required
+def status_detail(sid):
+    story = db.get_story_by_id(sid)
+    if not story:
+        return jsonify(error="Not found."), 404
+    viewers = db.get_story_viewers(sid)
+    story["viewers"] = viewers
+    return jsonify(story=story)
 
 
 @app.post("/api/status/<int:sid>/view")
@@ -1439,6 +1539,68 @@ def on_story_view(payload):
     if story and is_new:
         emit_to_user(story["userId"], "story:viewed", {"storyId": story_id, "viewerId": uid})
     return {"ok": True, "newView": is_new}
+
+
+# ---------------------------------------------------------------------------
+# WebRTC call signaling — relay to the other peer
+# ---------------------------------------------------------------------------
+CALL_EVENTS = ["call:invite", "call:answer", "call:ice", "call:reject", "call:cancel", "call:end", "call:busy", "call:dismiss"]
+for _ev in CALL_EVENTS:
+    exec(f'''@socketio.on("{_ev}")
+def on_{_ev.replace(":", "_")}(payload):
+    uid = sid_user.get(request.sid)
+    if not uid: return {{"error": "Not authenticated."}}
+    payload = payload or {{}}
+    to_uid = int(payload.get("toUserId") or 0)
+    if to_uid: emit_to_user(to_uid, "{_ev}", {{**payload, "fromUserId": uid}})
+    return {{"ok": True}}
+''')
+
+
+# ---------------------------------------------------------------------------
+# Poll create / vote — relay to conversation members
+# ---------------------------------------------------------------------------
+@socketio.on("poll:create")
+def on_poll_create(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    cid = int(payload.get("conversationId") or 0)
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not db.is_conversation_member(conv, uid):
+        return {"error": "Conversation not found."}
+    emit_conv(conv, "poll:create", payload)
+    return {"ok": True}
+
+
+@socketio.on("poll:vote")
+def on_poll_vote(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    cid = int(payload.get("conversationId") or 0)
+    conv = db.get_conversation_by_id(cid)
+    if not conv or not db.is_conversation_member(conv, uid):
+        return {"error": "Conversation not found."}
+    emit_conv(conv, "poll:vote", {**payload, "userId": uid})
+    return {"ok": True}
+
+
+@socketio.on("message:view-once")
+def on_message_view_once(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    mid = int(payload.get("messageId") or 0)
+    meta = db.get_message_meta(mid)
+    if not meta or meta["senderId"] == uid:
+        return {"error": "Not allowed."}
+    db.mark_message_consumed(mid)
+    emit_to_user(meta["senderId"], "message:consumed", {"messageId": mid, "byUserId": uid})
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

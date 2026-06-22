@@ -72,12 +72,13 @@ def session_scope():
 class User(Base):
     __tablename__ = "users"
     id = mapped_column(Integer, primary_key=True)
-    username = mapped_column(String(40), unique=True, nullable=False, index=True)
-    display_name = mapped_column(String(80), nullable=False)
-    password_hash = mapped_column(Text, nullable=False)
+    username = mapped_column(String(32), unique=True, nullable=False, index=True)
+    display_name = mapped_column(String(64), nullable=False)
+    password_hash = mapped_column(String(256), nullable=False)
     avatar_color = mapped_column(String(16), nullable=False)
     avatar_url = mapped_column(Text, nullable=True)
     token_version = mapped_column(Integer, nullable=False, default=0)
+    privacy = mapped_column(Text, nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -102,6 +103,7 @@ class Conversation(Base):
     avatar_url = mapped_column(Text, nullable=True)      # group photo
     avatar_color = mapped_column(String(16), nullable=True)
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    description = mapped_column(Text, nullable=True)
     pinned_message_id = mapped_column(Integer, nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("user_a", "user_b", name="uq_conv_pair"),)
@@ -125,6 +127,7 @@ class Message(Base):
     attachment_name = mapped_column(Text, nullable=True)
     unsent = mapped_column(Boolean, nullable=False, default=False)
     edited = mapped_column(Boolean, nullable=False, default=False)
+    consumed = mapped_column(Boolean, nullable=False, default=False)
     reply_to_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (Index("idx_messages_conv", "conversation_id", "id"),)
@@ -259,19 +262,33 @@ class Note(Base):
     text = mapped_column(Text, nullable=False)
     music = mapped_column(Text, nullable=True)   # JSON: {title, artist, art, url}
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+NOTE_TTL_HOURS = 24
+
+
+def get_user_note(uid):
+    with session_scope() as s:
+        n = s.get(Note, uid)
+        if n and n.expires_at > now_utc():
+            return {"id": n.user_id, "text": n.text, "music": n.music, "createdAt": _iso(n.created_at)}
+        return None
 
 
 def set_note(user_id, text, music=None):
     """Set (or replace) the user's 24h note (optional attached song)."""
     music_json = json.dumps(music) if music else None
+    expires = now_utc() + timedelta(hours=NOTE_TTL_HOURS)
     with session_scope() as s:
         n = s.get(Note, user_id)
         if n:
             n.text = text
             n.music = music_json
             n.created_at = now_utc()
+            n.expires_at = expires
         else:
-            s.add(Note(user_id=user_id, text=text, music=music_json, created_at=now_utc()))
+            s.add(Note(user_id=user_id, text=text, music=music_json, created_at=now_utc(), expires_at=expires))
 
 
 def clear_note(user_id):
@@ -1369,6 +1386,64 @@ def delete_reel(reel_id, user_id):
             return False
         s.delete(r)
         return True
+
+
+# ---------------------------------------------------------------------------
+# Message / Group / Privacy helpers
+# ---------------------------------------------------------------------------
+def mark_message_consumed(message_id):
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if m:
+            m.consumed = True
+
+
+def transfer_group(cid, new_owner_id):
+    with session_scope() as s:
+        c = s.get(Conversation, cid)
+        if c:
+            c.owner_id = new_owner_id
+
+
+def set_group_description(cid, desc):
+    with session_scope() as s:
+        c = s.get(Conversation, cid)
+        if c:
+            c.description = desc
+
+
+def get_read_by(conversation_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(MessageRead).where(MessageRead.conversation_id == conversation_id)
+        ).scalars().all()
+        result = []
+        for r in rows:
+            u = s.get(User, r.user_id)
+            if u:
+                result.append({"userId": r.user_id, "displayName": u.display_name, "lastReadMessageId": r.last_read_message_id})
+        return result
+
+
+def get_conversation_media(conversation_id):
+    with session_scope() as s:
+        rows = s.execute(
+            select(Message).where(
+                Message.conversation_id == conversation_id,
+                Message.attachment_type.in_(["image", "video"]),
+                Message.unsent == False,
+            ).order_by(Message.created_at.desc()).limit(200)
+        ).scalars().all()
+        return [public_message(m) for m in rows if m.attachment_url]
+
+
+def set_user_privacy(uid, key, value):
+    with session_scope() as s:
+        u = s.get(User, uid)
+        if u:
+            priv = json.loads(u.privacy) if u.privacy else {}
+            priv[key] = value
+            u.privacy = json.dumps(priv)
 
 
 # ---------------------------------------------------------------------------
