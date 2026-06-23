@@ -1440,8 +1440,7 @@ SAMPLE_REELS = [
 
 
 def seed_sample_reels():
-    """Always ensure sample reels exist (TikTok/FB-style demo content).
-    Runs every startup but only seeds if the Tea account or its reels are missing."""
+    """Seed sample reels once when the Tea account has none."""
     with session_scope() as s:
         tea = s.execute(select(User).where(User.username == "_tea_")).scalar_one_or_none()
         if not tea:
@@ -1455,13 +1454,8 @@ def seed_sample_reels():
         existing = s.execute(
             select(func.count(Reel.id)).where(Reel.user_id == tea.id)
         ).scalar_one()
-        if existing >= len(SAMPLE_REELS):
+        if existing > 0:
             return
-        # Remove stale sample reels via ORM so FK cascades fire properly
-        stale = s.execute(select(Reel).where(Reel.user_id == tea.id)).scalars().all()
-        for reel in stale:
-            s.delete(reel)
-        s.flush()
         for sample in SAMPLE_REELS:
             s.add(Reel(
                 user_id=tea.id,
