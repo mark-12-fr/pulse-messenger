@@ -4804,10 +4804,13 @@
               v.play().catch(() => {});
             } else { v.pause(); }
           }
-          if (unmuted && e.isIntersecting && e.intersectionRatio >= 0.6) {
+          if (e.isIntersecting && e.intersectionRatio >= 0.6) {
             const ifr = e.target.querySelector('.reel-embed iframe');
-            if (ifr && ifr.src.includes('mute=1')) {
-              try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
+            if (ifr) {
+              if (!ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
+              if (ifr.src.includes('mute=1')) {
+                try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
+              }
             }
           }
           const id = Number(e.target.dataset.id);
@@ -4896,7 +4899,35 @@
 
     feed.addEventListener('scroll', () => {
       if (feed.scrollTop + feed.clientHeight * 2.5 > feed.scrollHeight) loadReels(false);
+      trimReels();
     }, { passive: true });
+
+    // Unload off-screen reels to free memory (YouTube iframes are ~80 MB each).
+    // Keep the container div for layout stability; just clear the iframe/video src.
+    // When the reel comes back into view the IntersectionObserver reloads it.
+    let _trimTimer = null;
+    function trimReels() {
+      clearTimeout(_trimTimer);
+      _trimTimer = setTimeout(() => {
+        const fr = feed.getBoundingClientRect();
+        const top = fr.top - 200;
+        const bot = fr.bottom + 200;
+        feed.querySelectorAll('.reel').forEach((el) => {
+          const r = el.getBoundingClientRect();
+          const offScreen = r.bottom < top || r.top > bot;
+          const ifr = el.querySelector('iframe');
+          if (ifr) {
+            if (offScreen && ifr.src) { ifr.dataset.src = ifr.src; ifr.src = ''; }
+            else if (!offScreen && !ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
+          }
+          const v = el.querySelector('video');
+          if (v) {
+            if (offScreen && v.src) { v.dataset.src = v.src; v.pause(); v.src = ''; v.load(); }
+            else if (!offScreen && !v.src && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
+          }
+        });
+      }, 400);
+    }
 
     if (reelInput) reelInput.addEventListener('change', () => {
       const file = reelInput.files && reelInput.files[0];
