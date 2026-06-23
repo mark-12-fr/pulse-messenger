@@ -1457,7 +1457,11 @@ def seed_sample_reels():
         ).scalar_one()
         if existing >= len(SAMPLE_REELS):
             return
-        s.execute(delete(Reel).where(Reel.user_id == tea.id))
+        # Remove stale sample reels via ORM so FK cascades fire properly
+        stale = s.execute(select(Reel).where(Reel.user_id == tea.id)).scalars().all()
+        for reel in stale:
+            s.delete(reel)
+        s.flush()
         for sample in SAMPLE_REELS:
             s.add(Reel(
                 user_id=tea.id,
