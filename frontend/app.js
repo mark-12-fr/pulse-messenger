@@ -426,6 +426,16 @@
       $('#search-clear').classList.remove('hidden');
       doSearch(u);
     }
+    // Check for pending call from push notification
+    if (pendingCallData) {
+      const pd = pendingCallData; pendingCallData = null;
+      showIncomingCallFromPush(pd);
+    } else {
+      // Also check server for any pending call offer
+      api('/api/call/pending').then((r) => {
+        if (r && r.call && r.call.fromUserId && !activeCall) showIncomingCallFromPush(r.call);
+      }).catch(() => {});
+    }
     // One-time auto-prompt for push notifications
     if (!localStorage.getItem('push_prompted')) {
       localStorage.setItem('push_prompted', '1');
@@ -879,6 +889,7 @@
   // chat list hasn't loaded yet, remember it and open once it has.
   let pendingOpenConv = null;
   let pendingAdd = null;
+  let pendingCallData = null;
   let conversationsReady = false;
   function openConversationById(cid) {
     const c = state.conversations.get(cid);
@@ -3742,6 +3753,28 @@
     });
   }
 
+  // Called when the app opens from a call push notification and the callee needs to
+  // accept/reject. The backend has stored the pending offer so we can answer it.
+  async function showIncomingCallFromPush(data) {
+    if (!data || !data.fromUserId) return;
+    if (activeCall) return;
+    const peer = state.friends.get(data.fromUserId) || { id: data.fromUserId, displayName: 'Caller' };
+    activeCall = {
+      callId: data.callId || 'push_' + Date.now().toString(36),
+      peer, media: data.media === 'video' ? 'video' : 'audio', role: 'callee',
+      status: 'ringing', local: null, remote: null, pc: null, offer: null, remoteDescSet: false,
+      pendingIce: [], timer: null, dropTimer: null, secs: 0, muted: false, camOff: false,
+    };
+    // Fetch the stored offer from the backend
+    try {
+      const resp = await api('/api/call/pending');
+      if (resp && resp.call && resp.call.sdp) activeCall.offer = resp.call.sdp;
+    } catch (e) {}
+    if (!activeCall.offer) { endCallCleanup(); closeCallUI(null); return; }
+    openCallUI();
+    startRinging();
+  }
+
   // Wire header call buttons + the in-call action bar (delegated, bound once).
   (function wireCallControls() {
     const ab = document.getElementById('call-audio-btn');
@@ -4332,10 +4365,10 @@
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
-    // tapping a push notification asks us to open that exact conversation
     navigator.serviceWorker.addEventListener('message', (e) => {
       const d = e.data || {};
       if (d.type === 'tea:open' && d.conversationId) requestOpenConversation(Number(d.conversationId));
+      if (d.type === 'tea:call' && d.fromUserId) pendingCallData = { fromUserId: Number(d.fromUserId), callId: d.callId, media: d.media || 'audio' };
     });
   }
 
@@ -4560,14 +4593,18 @@
     $('#splash').classList.add('hidden');
   }
 
-  // Deep-links: /?open=<conversationId> (notification tap) · /?add=<username> (invite)
+  // Deep-links: /?open=<conversationId> (notification tap) · /?add=<username> (invite) · /?call=<callId>&from=<userId>&media=<audio|video>
   try {
     const params = new URLSearchParams(location.search);
     const oc = params.get('open');
     const ad = params.get('add');
+    const cl = params.get('call');
+    const fr = params.get('from');
+    const md = params.get('media');
     if (oc) pendingOpenConv = Number(oc);
     if (ad) pendingAdd = String(ad).slice(0, 32);
-    if (oc || ad) history.replaceState({}, '', location.pathname);
+    if (cl && fr) pendingCallData = { fromUserId: Number(fr), callId: cl, media: md || 'audio' };
+    if (oc || ad || cl) history.replaceState({}, '', location.pathname);
   } catch (e) {}
 
   // ============================================================

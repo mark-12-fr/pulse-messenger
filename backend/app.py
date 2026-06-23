@@ -1558,6 +1558,11 @@ _CALL_RELAY = {
 }
 
 
+# In-memory store for pending call offers (keyed by callee user_id).
+# When a callee opens the app after receiving a push, they can claim the offer.
+_pending_calls = {}
+
+
 def _make_call_handler(ev, out_ev):
     def handler(payload):
         uid = sid_user.get(request.sid)
@@ -1567,11 +1572,37 @@ def _make_call_handler(ev, out_ev):
         to_uid = int(payload.get("toUserId") or 0)
         if not to_uid:
             return {"ok": True}
-        emit_to_user(to_uid, out_ev, {**payload, "fromUserId": uid})
-        # For call:invite, tell the caller whether we pushed the callee's phone
         if ev == "call:invite":
+            caller = db.get_user_by_id(uid)
+            caller_name = caller["displayName"] if caller else "Someone"
+            media = payload.get("media", "audio")
+            is_video = media == "video"
+            # Store the pending offer so the callee can claim it after opening via push
+            _pending_calls[to_uid] = {
+                "callId": payload.get("callId"),
+                "fromUserId": uid,
+                "fromUser": caller,
+                "media": media,
+                "sdp": payload.get("sdp"),
+                "ts": time.time(),
+            }
+            emit_to_user(to_uid, out_ev, {**payload, "fromUserId": uid})
             online = is_online(to_uid)
+            if not online:
+                title = f"{caller_name} is calling"
+                body = f"Incoming {'video' if is_video else 'voice'} call"
+                data = {
+                    "callId": payload.get("callId"),
+                    "fromUserId": uid,
+                    "media": media,
+                    "type": "call",
+                }
+                socketio.start_background_task(push.send_to_user, to_uid, title, body, force=True, data=data)
             return {"ok": True, "awaitingPeer": not online}
+        if ev == "call:cancel" or ev == "call:end":
+            _pending_calls.pop(to_uid, None)
+            _pending_calls.pop(uid, None)
+        emit_to_user(to_uid, out_ev, {**payload, "fromUserId": uid})
         return {"ok": True}
     handler.__name__ = f"on_{ev.replace(':', '_')}"
     return handler
@@ -1579,6 +1610,20 @@ def _make_call_handler(ev, out_ev):
 
 for _ev, _out in _CALL_RELAY.items():
     socketio.on(_ev)(_make_call_handler(_ev, _out))
+
+
+@app.get("/api/call/pending")
+@auth_required
+def get_pending_call():
+    """Return any pending call offer. Used after the app opens from a push."""
+    call = _pending_calls.get(g.user["id"])
+    if not call:
+        return jsonify(call=None)
+    # Expire after 60 seconds
+    if time.time() - call.get("ts", 0) > 60:
+        _pending_calls.pop(g.user["id"], None)
+        return jsonify(call=None)
+    return jsonify(call=call)
 
 
 # ---------------------------------------------------------------------------

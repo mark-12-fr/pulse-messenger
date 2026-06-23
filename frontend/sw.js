@@ -43,43 +43,47 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Tea';
   const body = data.body || 'New message';
   event.waitUntil((async () => {
-    // update the app-icon unread badge if the device supports it
     try {
       if (typeof data.badge === 'number' && self.navigator && self.navigator.setAppBadge) {
         if (data.badge > 0) await self.navigator.setAppBadge(data.badge);
         else await self.navigator.clearAppBadge();
       }
     } catch (e) {}
-    if (!data.force) {
+    if (!data.force && data.type !== 'call') {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      // app is open AND in the foreground -> the in-app toast handles it; skip
       if (all.some((c) => c.visibilityState === 'visible')) return;
     }
+    const tag = data.type === 'call' ? 'tea-call' : 'tea-message';
     await self.registration.showNotification(title, {
       body,
       icon: '/icon-192.png',
       badge: '/icon-192.png',
-      tag: 'tea-message',
+      tag,
       renotify: true,
       silent: true,
-      vibrate: [120, 60, 120, 60, 120],
-      requireInteraction: false,
-      data: { conversationId: data.conversationId || null },
+      vibrate: data.type === 'call' ? [200, 100, 200, 100, 200, 100, 400] : [120, 60, 120, 60, 120],
+      requireInteraction: data.type === 'call',
+      data: { type: data.type || 'message', callId: data.callId || null, fromUserId: data.fromUserId || null, media: data.media || null, conversationId: data.conversationId || null },
     });
   })());
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const cid = event.notification.data && event.notification.data.conversationId;
+  const nd = event.notification.data || {};
+  const isCall = nd.type === 'call';
+  const cid = nd.conversationId;
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const c of all) {
       if ('focus' in c) {
-        if (cid) { try { c.postMessage({ type: 'tea:open', conversationId: cid }); } catch (e) {} }
+        try { c.postMessage({ type: isCall ? 'tea:call' : 'tea:open', callId: nd.callId, fromUserId: nd.fromUserId, media: nd.media, conversationId: cid }); } catch (e) {}
         return c.focus();
       }
     }
-    if (self.clients.openWindow) return self.clients.openWindow(cid ? ('/?open=' + cid) : '/');
+    if (self.clients.openWindow) {
+      if (isCall) return self.clients.openWindow('/?call=' + nd.callId + '&from=' + nd.fromUserId + '&media=' + nd.media);
+      return self.clients.openWindow(cid ? ('/?open=' + cid) : '/');
+    }
   })());
 });
