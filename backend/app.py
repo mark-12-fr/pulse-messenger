@@ -149,7 +149,7 @@ def _fetch_and_seed_shorts():
             if resp.status_code != 200:
                 continue
             root = ET.fromstring(resp.content)
-            for entry in list(root.findall("atom:entry", ns))[:5]:
+            for entry in list(root.findall("atom:entry", ns))[:1]:
                 if seeded >= 50:
                     break
                 link_el = entry.find("atom:link", ns)
@@ -165,15 +165,6 @@ def _fetch_and_seed_shorts():
                 vid = m if isinstance(m, str) else (m.group(1) if m else None)
                 if not vid:
                     continue
-                # Quick duration check (3s timeout) — skip if definitely >60s
-                try:
-                    dr = requests.get(f"https://www.youtube.com/watch?v={vid}", timeout=3,
-                                      headers={"User-Agent": "Mozilla/5.0"})
-                    dm = re.search(r'"lengthSeconds":"(\d+)"', dr.text)
-                    if dm and int(dm.group(1)) > 61:
-                        continue
-                except Exception:
-                    pass  # can't check — create anyway
                 title_el = entry.find("atom:title", ns)
                 caption = (title_el.text or "")[:200] if title_el is not None else ""
                 embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0"
@@ -209,9 +200,9 @@ def _cleanup_long_reels():
             if not v:
                 continue
             try:
-                resp = requests.get(f"https://www.youtube.com/watch?v={v}", timeout=5,
+                resp = requests.get(f"https://www.youtube.com/get_video_info?video_id={v}", timeout=5,
                                     headers={"User-Agent": "Mozilla/5.0"})
-                dm = re.search(r'"lengthSeconds":"(\d+)"', resp.text)
+                dm = re.search(r'length_seconds=(\d+)', resp.text)
                 if dm and int(dm.group(1)) > 61:
                     with db.session_scope() as s2:
                         r2 = s2.get(db.Reel, r.id)
