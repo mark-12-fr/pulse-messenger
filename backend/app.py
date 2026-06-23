@@ -40,12 +40,13 @@ elif ASYNC_MODE == "gevent":
         pass
 
 import json
-import random
 import re
+import os
 import time
 import secrets
 import functools
 import ipaddress
+import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from html import unescape as _html_unescape
 from datetime import datetime, timedelta, timezone
@@ -84,6 +85,68 @@ import push
 # Config
 # ---------------------------------------------------------------------------
 db.init_db()
+
+# Fetch trending YouTube Shorts and seed as reels so the feed is never empty.
+# YouTube RSS feeds don't require an API key — they return the latest videos
+# from a channel in a simple Atom feed.
+_SHORTS_CHANNELS = [
+    "UCqECVaQhG-4f87eg0H8R03A",  # YouTube Shorts
+    "UC4QobU6STFB0PjPMWb2LvBw",  # BBC Shorts
+    "UCsXVk37bltHxD1rDPwtNM8Q",  # Kurzgesagt
+    "UCpIafFPqMnoqWb2M77p0pIg",  # Reel Shorts
+    "UC8butISFwT-Wl7EV0hUK0BQ",  # freeCodeCamp
+    "UCYzQkPpGQqPmhFSlBK1m37Q",  # TechLinked
+    "UCvJJ_xJj8PBaRNB7OJstSjw",  # DW Shorts
+    "UCpdJFJ2HjruTqQUuyEXdXHA",  # CBS Shorts
+    "UCwWhs_6x42TyRM4Wstoq8HA",  # NBC News Shorts
+]
+
+
+def _fetch_and_seed_shorts():
+    """Pull latest YouTube Shorts from channels and seed unseen ones as reels."""
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    seeded = 0
+    for cid in _SHORTS_CHANNELS:
+        if seeded >= 24:
+            break
+        try:
+            resp = requests.get(
+                f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}",
+                timeout=15,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TeaBot/1.0)"},
+            )
+            if resp.status_code != 200:
+                continue
+            root = ET.fromstring(resp.content)
+            for entry in list(root.findall("atom:entry", ns))[:4]:
+                if seeded >= 24:
+                    break
+                link_el = entry.find("atom:link", ns)
+                href = (link_el.get("href") or "") if link_el is not None else ""
+                m = re.search(r'(?:v=|youtu\.be/|shorts/)([\w-]{11})', href)
+                if not m:
+                    id_el = entry.find("atom:id", ns)
+                    if id_el is not None and id_el.text:
+                        parts = id_el.text.split(":")
+                        m = parts[-1] if len(parts) >= 3 else None
+                    else:
+                        m = None
+                vid = m if isinstance(m, str) else (m.group(1) if m else None)
+                if not vid:
+                    continue
+                title_el = entry.find("atom:title", ns)
+                caption = (title_el.text or "")[:200] if title_el is not None else ""
+                embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0"
+                try:
+                    db.ensure_reel_exists(embed, caption)
+                    seeded += 1
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+
+_fetch_and_seed_shorts()
 
 # Keep JWT_SECRET stable across restarts so logins persist forever (until the user
 # logs out). Prefer the env var; otherwise load — or generate once and store — it

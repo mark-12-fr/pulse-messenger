@@ -1431,6 +1431,37 @@ def delete_reel(reel_id, user_id):
         return True
 
 
+def get_or_create_tea_user():
+    """Return the _tea_ system user ID (creates on first call)."""
+    with session_scope() as s:
+        tea = s.execute(select(User).where(User.username == "_tea_")).scalar_one_or_none()
+        if not tea:
+            tea = User(
+                username="_tea_",
+                display_name="Tea 🍵",
+                password_hash="__no_login__",
+                avatar_color="#7c3aed",
+            )
+            s.add(tea)
+            s.flush()
+        return tea.id
+
+
+def ensure_reel_exists(embed_url, caption):
+    """Create a reel if the embed URL doesn't exist yet. Returns the reel id."""
+    with session_scope() as s:
+        existing = s.execute(
+            select(Reel.id).where(Reel.video_url == embed_url)
+        ).scalar_one_or_none()
+        if existing:
+            return existing
+        tea_id = get_or_create_tea_user()
+        r = Reel(user_id=tea_id, video_url=embed_url, caption=caption, created_at=now_utc())
+        s.add(r)
+        s.flush()
+        return r.id
+
+
 # ---------------------------------------------------------------------------
 # Message / Group / Privacy helpers
 # ---------------------------------------------------------------------------
