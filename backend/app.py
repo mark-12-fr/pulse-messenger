@@ -91,46 +91,41 @@ db.init_db()
 # YouTube RSS feeds don't require an API key — they return the latest videos
 # from a channel in a simple Atom feed.
 _SHORTS_CHANNELS = [
-    # YouTube Shorts official
-    "UCqECVaQhG-4f87eg0H8R03A",  # YouTube Shorts
-    "UCpIafFPqMnoqWb2M77p0pIg",  # Reel Shorts
-    # Entertainment
-    "UCX6OQ3DkcsbYNE6H8uQQuVA",  # MrBeast
-    "UCRij8kUCa1lUQrR6HjX7i0g",  # Dude Perfect
-    "UCmUcrYp7s-pjC_nXbHMC_pQ",  # Zach King
-    "UCUK0HBIBWgM2c4VsPhkYY4w",  # The Slow Mo Guys
-    "UC-lHJZR3Gqxm24_Vd_AJ5Yw",  # PewDiePie
-    # Animation / Cartoons
+    # Cartoon Network official
+    "UCdaH1qMx7IB7TO0frB_E7jQ",  # Cartoon Network
+    "UCkWx9zg6CyiSt6UtM9F7O-Q",  # Cartoon Network Shorts
+    "UCGydrkfIhUDNCotYQI8TJhA",  # Cartoon Network UK
+    # Disney
+    "UC6GTU8qHl6JV9KCHSG3G41A",  # Disney Channel
+    "UCaC15mavCtkHIBwRA4v9cEg",  # Disney Junior
+    "UC7Zx2uI2rF0V8u4q6m4FwVg",  # Disney Shorts
+    # Nickelodeon
+    "UC9Z9kPRMd_8V3BwTzDHLG4g",  # Nickelodeon
+    "UCp3jqA2w1KvSbwq0MWGLr8w",  # Nick Jr.
+    # Kids Cartoons  
+    "UCbCmjCuTUZos6Inko4u57UQ",  # Cocomelon
+    "UCjRkW6i3tLMOkE4_0N9JpXw",  # Peppa Pig Official
+    "UCiK3FQGBnu2zht8sqxMau4A",  # Sesame Street
+    "UC-ViaOGvNQy6lYwVgKCpEMw",  # Masha and the Bear
+    "UCyOEm6gDZEH4SpBfMXdA3iw",  # Super Simple Songs
+    "UCvnQzY7sM3EODSKZfkS7_zg",  # Bluey
+    "UCUjjyX5kKYfHIUKV5X5NSCw",  # Thomas & Friends
+    "UC5Y3MVQzPf2yVwPmBYCq1vg",  # BabyBus
+    "UCJh_SMpDYOqmdQLAMg7vukg",  # Summer Camp Island
+    # Anime / Animation Creators
     "UCo8bcnLyZH8tBIH9V1mLgqQ",  # TheOdd1sOut
     "UCGwu0nbY2wSkW8N-cghnLpA",  # JaidenAnimations
-    "UCYzPXprvl5Y-Sf0g4vX-m6g",  # Jacksepticeye
-    # Science & Education
-    "UCsXVk37bltHxD1rDPwtNM8Q",  # Kurzgesagt
-    "UC6nSFpj9HTCZ5t-N3Rm3-HA",  # Vsauce
-    "UCHnyfMqiRRG1u-2MsSQLbXA",  # Veritasium
-    "UCY1kMZp36IQSyNx_9h4mpCg",  # Mark Rober
-    "UC6107grRI4m0o2-emgoDnAA",  # SmarterEveryDay
-    "UCZYTClx2T1of7BRZ86-8fow",  # SciShow
-    "UCFhXFikryT4aFcLkLw2LBLA",  # NileRed
-    # Tech
-    "UCBJycsmduvYEL83R_U4JriQ",  # MKBHD
-    "UCXuqSBlHAE6Xw-yeJA0Tunw",  # Linus Tech Tips
-    "UC8butISFwT-Wl7EV0hUK0BQ",  # freeCodeCamp
-    "UCYzQkPpGQqPmhFSlBK1m37Q",  # TechLinked
-    # Lifestyle & Fun
-    "UC4rlAVgAK0SGk-yTfe48Qpw",  # BRIGHT SIDE
-    "UC295-Dw_tDNtZXFeAPAW6Aw",  # 5-Minute Crafts
-    "UCpko_-a4wgz2u_DgDgd9fqA",  # BuzzFeedVideo
-    "UCsQbhqvfJLaPx8eQTNqOaTg",  # The Dodo
-    # News
-    "UC4QobU6STFB0PjPMWb2LvBw",  # BBC Shorts
-    "UCvJJ_xJj8PBaRNB7OJstSjw",  # DW Shorts
-    "UCpdJFJ2HjruTqQUuyEXdXHA",  # CBS Shorts
-    "UCwWhs_6x42TyRM4Wstoq8HA",  # NBC News Shorts
-    "UCupvZG-5ko_eiXAupbDfxWw",  # CNN Shorts
-    # Sports
-    "UCiWLfKzX45t3ZFLdRgGTCyQ",  # ESPN
-    "UCqFMgrQ3mEDIp0S8Q7BrH1g",  # Sports Illustrated
+    "UCf6XG2KbD1fR2vFRnzm6M_A",  # RubberRoss
+    "UCZGYJFUizSax-yElQaFDp5Q",  # FlashGitz
+    "UCbH5UZ8gDppw0G1sZ8lTX5A",  # MeatCanyon
+    # Classic Cartoons
+    "UCpbpfcZfo1h7g5t7yA8cG8A",  # Looney Tunes
+    "UCt3svxXpKL6iEdqWrYLIRpA",  # Tom & Jerry
+    "UCw2D1e7QD4_X95k5X14VD0g",  # The Amazing World of Gumball
+    "UCY2Gnxuk7FZGqsn-A7E26Gw",  # Craig of the Creek
+    "UCQy_J4HcxKexxCO0qZhg5IQ",  # Big City Greens
+    "UCVnSr4SJ6tRMgLPHxgh-6DA",  # Teen Titans Go!
+    "UC3fbbyfFgvxhqkDgjVBfzSQ",  # We Bare Bears]
 ]
 
 def _fetch_and_seed_shorts():
