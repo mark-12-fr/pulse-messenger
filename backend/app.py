@@ -90,15 +90,42 @@ db.init_db()
 # YouTube RSS feeds don't require an API key — they return the latest videos
 # from a channel in a simple Atom feed.
 _SHORTS_CHANNELS = [
+    # YouTube Shorts official
     "UCqECVaQhG-4f87eg0H8R03A",  # YouTube Shorts
-    "UC4QobU6STFB0PjPMWb2LvBw",  # BBC Shorts
-    "UCsXVk37bltHxD1rDPwtNM8Q",  # Kurzgesagt
     "UCpIafFPqMnoqWb2M77p0pIg",  # Reel Shorts
+    # Entertainment
+    "UCX6OQ3DkcsbYNE6H8uQQuVA",  # MrBeast
+    "UCRij8kUCa1lUQrR6HjX7i0g",  # Dude Perfect
+    "UCmUcrYp7s-pjC_nXbHMC_pQ",  # Zach King
+    "UCUK0HBIBWgM2c4VsPhkYY4w",  # The Slow Mo Guys
+    # Science & Education
+    "UCsXVk37bltHxD1rDPwtNM8Q",  # Kurzgesagt
+    "UC6nSFpj9HTCZ5t-N3Rm3-HA",  # Vsauce
+    "UCHnyfMqiRRG1u-2MsSQLbXA",  # Veritasium
+    "UCY1kMZp36IQSyNx_9h4mpCg",  # Mark Rober
+    "UC6107grRI4m0o2-emgoDnAA",  # SmarterEveryDay
+    # Tech
+    "UCBJycsmduvYEL83R_U4JriQ",  # MKBHD
+    "UCXuqSBlHAE6Xw-yeJA0Tunw",  # Linus Tech Tips
     "UC8butISFwT-Wl7EV0hUK0BQ",  # freeCodeCamp
     "UCYzQkPpGQqPmhFSlBK1m37Q",  # TechLinked
+    # Lifestyle & Fun
+    "UC4rlAVgAK0SGk-yTfe48Qpw",  # BRIGHT SIDE
+    "UC295-Dw_tDNtZXFeAPAW6Aw",  # 5-Minute Crafts
+    "UCpko_-a4wgz2u_DgDgd9fqA",  # BuzzFeedVideo
+    "UCsQbhqvfJLaPx8eQTNqOaTg",  # The Dodo
+    # News
+    "UC4QobU6STFB0PjPMWb2LvBw",  # BBC Shorts
     "UCvJJ_xJj8PBaRNB7OJstSjw",  # DW Shorts
     "UCpdJFJ2HjruTqQUuyEXdXHA",  # CBS Shorts
     "UCwWhs_6x42TyRM4Wstoq8HA",  # NBC News Shorts
+    "UCupvZG-5ko_eiXAupbDfxWw",  # CNN Shorts
+    # Sports
+    "UCiWLfKzX45t3ZFLdRgGTCyQ",  # ESPN
+    "UCqFMgrQ3mEDIp0S8Q7BrH1g",  # Sports Illustrated
+    # Music / Viral
+    "UC-9-kyTW8ZkZNDHQJ6FgpwQ",  # Music Shorts
+    "UC6dI8r7WrGfAr4Z0JGR1bRg",  # Dance Shorts
 ]
 
 
@@ -107,7 +134,7 @@ def _fetch_and_seed_shorts():
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     seeded = 0
     for cid in _SHORTS_CHANNELS:
-        if seeded >= 24:
+        if seeded >= 50:
             break
         try:
             resp = requests.get(
@@ -119,7 +146,7 @@ def _fetch_and_seed_shorts():
                 continue
             root = ET.fromstring(resp.content)
             for entry in list(root.findall("atom:entry", ns))[:4]:
-                if seeded >= 24:
+                if seeded >= 50:
                     break
                 link_el = entry.find("atom:link", ns)
                 href = (link_el.get("href") or "") if link_el is not None else ""
