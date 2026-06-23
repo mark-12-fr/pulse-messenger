@@ -307,6 +307,8 @@ def init_db():
     _migrate_column("conversations", "description", "TEXT")
     _migrate_column("messages", "consumed", "BOOLEAN DEFAULT FALSE")
     _migrate_column("notes", "expires_at", "TIMESTAMPTZ")
+    # Fix sample reel URLs that were seeded with http:// instead of https://
+    _migrate_reel_scheme()
     # Seed sample reels so new users see content immediately
     seed_sample_reels()
 
@@ -315,6 +317,19 @@ def _migrate_column(table, column, coldef):
     try:
         with engine.connect() as c:
             c.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}"))
+            c.commit()
+    except Exception:
+        pass
+
+
+def _migrate_reel_scheme():
+    """Upgrade sample reel URLs from http:// to https:// (mixed-content fix)."""
+    try:
+        with engine.connect() as c:
+            c.execute(text(
+                "UPDATE reels SET video_url = REPLACE(video_url, 'http://', 'https://') "
+                "WHERE video_url LIKE 'http://%'"
+            ))
             c.commit()
     except Exception:
         pass
@@ -1427,15 +1442,15 @@ def delete_reel(reel_id, user_id):
 
 
 SAMPLE_REELS = [
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", "caption": "Fire dance 🔥"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", "caption": "Escape the ordinary ✈️"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", "caption": "Good vibes only ✨"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4", "caption": "Joyride time 🚗"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4", "caption": "When the code finally works 😅"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4", "caption": "Off-road mode 🏔️"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4", "caption": "New ride who dis? 🚗✨"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4", "caption": "Let's go! 🏎️💨"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatDoesSantaDoOnHisDayOff.mp4", "caption": "Me on a Sunday 😂"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", "caption": "Fire dance 🔥"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", "caption": "Escape the ordinary ✈️"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", "caption": "Good vibes only ✨"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4", "caption": "Joyride time 🚗"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4", "caption": "When the code finally works 😅"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4", "caption": "Off-road mode 🏔️"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4", "caption": "New ride who dis? 🚗✨"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4", "caption": "Let's go! 🏎️💨"},
+    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatDoesSantaDoOnHisDayOff.mp4", "caption": "Me on a Sunday 😂"},
 ]
 
 
