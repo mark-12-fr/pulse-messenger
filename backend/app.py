@@ -1543,24 +1543,42 @@ def on_story_view(payload):
 
 
 # ---------------------------------------------------------------------------
-# WebRTC call signaling — relay to the other peer
+# WebRTC call signaling — relay to the other peer (frontend uses different
+# event names for outbound vs inbound, so we translate here).
 # ---------------------------------------------------------------------------
-def _make_call_handler(ev):
+_CALL_RELAY = {
+    "call:invite": "call:incoming",   # caller → callee
+    "call:answer": "call:answered",   # callee → caller
+    "call:reject": "call:rejected",   # callee → caller
+    "call:cancel": "call:canceled",   # caller → callee
+    "call:end":    "call:ended",      # either side → the other
+    "call:ice":    "call:ice",        # same name both ways
+    "call:busy":   "call:busy",
+    "call:dismiss":"call:dismiss",
+}
+
+
+def _make_call_handler(ev, out_ev):
     def handler(payload):
         uid = sid_user.get(request.sid)
         if not uid:
             return {"error": "Not authenticated."}
         payload = payload or {}
         to_uid = int(payload.get("toUserId") or 0)
-        if to_uid:
-            emit_to_user(to_uid, ev, {**payload, "fromUserId": uid})
+        if not to_uid:
+            return {"ok": True}
+        emit_to_user(to_uid, out_ev, {**payload, "fromUserId": uid})
+        # For call:invite, tell the caller whether we pushed the callee's phone
+        if ev == "call:invite":
+            online = is_online(to_uid)
+            return {"ok": True, "awaitingPeer": not online}
         return {"ok": True}
     handler.__name__ = f"on_{ev.replace(':', '_')}"
     return handler
 
 
-for _ev in ["call:invite", "call:answer", "call:ice", "call:reject", "call:cancel", "call:end", "call:busy", "call:dismiss"]:
-    socketio.on(_ev)(_make_call_handler(_ev))
+for _ev, _out in _CALL_RELAY.items():
+    socketio.on(_ev)(_make_call_handler(_ev, _out))
 
 
 # ---------------------------------------------------------------------------
