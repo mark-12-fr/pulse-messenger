@@ -213,6 +213,14 @@ def _fetch_and_seed_shorts():
             continue
 
 
+# Remove old auto-fetched reels so only short videos (≤60s) remain
+try:
+    tea_id = db.get_or_create_tea_user()
+    with db.session_scope() as s:
+        s.execute(db.delete(db.Reel).where(db.Reel.user_id == tea_id))
+except Exception:
+    pass
+
 _fetch_and_seed_shorts()
 
 # Keep JWT_SECRET stable across restarts so logins persist forever (until the user
