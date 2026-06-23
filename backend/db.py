@@ -1440,11 +1440,9 @@ SAMPLE_REELS = [
 
 
 def seed_sample_reels():
-    """Seed the reels table with demo videos when it's empty (TikTok/FB-style)."""
+    """Always ensure sample reels exist (TikTok/FB-style demo content).
+    Runs every startup but only seeds if the Tea account or its reels are missing."""
     with session_scope() as s:
-        count = s.execute(select(func.count(Reel.id))).scalar_one()
-        if count > 0:
-            return
         tea = s.execute(select(User).where(User.username == "_tea_")).scalar_one_or_none()
         if not tea:
             tea = User(
@@ -1454,6 +1452,12 @@ def seed_sample_reels():
             )
             s.add(tea)
             s.flush()
+        existing = s.execute(
+            select(func.count(Reel.id)).where(Reel.user_id == tea.id)
+        ).scalar_one()
+        if existing >= len(SAMPLE_REELS):
+            return
+        s.execute(delete(Reel).where(Reel.user_id == tea.id))
         for sample in SAMPLE_REELS:
             s.add(Reel(
                 user_id=tea.id,
