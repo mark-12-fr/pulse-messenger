@@ -444,9 +444,13 @@
         if (st === 'off') {
           await enablePush();
         }
-      }, 3000);
+        }, 3000);
+      }
+      // Pre-fetch reels so they're ready when user opens the view
+      api('/api/reels').then((data) => {
+        if (data && data.reels) { reels = data.reels; hasMore = !!data.hasMore; }
+      }).catch(() => {});
     }
-  }
 
   function showChatsSkeleton() {
     const box = $('#tab-chats');
@@ -4719,8 +4723,19 @@
       document.body.classList.add('reels-open');
       // restore iframes that were cleared on close
       feed.querySelectorAll('.reel-embed iframe[data-src]').forEach((ifr) => { ifr.src = ifr.dataset.src; delete ifr.dataset.src; });
-      if (!reels.length) loadReels(true);
-      else observeReels();
+      if (!reels.length) { loadReels(true); return; }
+      // render cached reels synchronously (inside user gesture -> allows autoplay with sound)
+      if (!feed.children.length || feed.querySelector('.reels-empty')) {
+        feed.innerHTML = '';
+        reels.forEach((r) => feed.appendChild(renderReel(r)));
+      }
+      observeReels();
+      // try to play the first visible reel with sound right away
+      const first = feed.querySelector('.reel');
+      if (first) {
+        const v = first.querySelector('video');
+        if (v) { v.muted = false; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
+      }
     }
     function closeReels() {
       view.classList.add('hidden');
@@ -4761,11 +4776,10 @@
       const isEmbed = r.source === 'youtube' || r.source === 'tiktok';
       const mediaHtml = isEmbed
         ? `<div class="reel-embed"><iframe src="${escapeHtml(r.videoUrl)}" frameborder="0" allow="autoplay; encrypted-media; accelerometer; gyroscope" allowfullscreen loading="lazy"></iframe></div>`
-        : `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline muted preload="metadata"></video>`;
+        : `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline preload="metadata"></video>`;
       el.innerHTML =
         mediaHtml +
-        `<div class="reel-mute">${unmuted ? IC.speaker : IC.muted}</div>
-        <div class="reel-side">
+        `<div class="reel-side">
           <button class="reel-act reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
           <button class="reel-act" data-comment aria-label="Comments">${IC.comment}<span class="reel-cmt-n">${r.commentCount || 0}</span></button>
           <button class="reel-act" data-share aria-label="Share">${IC.shareArrow}</button>
@@ -4781,17 +4795,15 @@
 
     function observeReels() {
       if (io) io.disconnect();
-      feed.classList.toggle('unmuted', unmuted);
       io = new IntersectionObserver((entries) => {
         entries.forEach((e) => {
           const v = e.target.querySelector('video');
           if (v) {
             if (e.isIntersecting && e.intersectionRatio >= 0.6) {
               v.muted = !unmuted;
-              v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+              v.play().catch(() => {});
             } else { v.pause(); }
           }
-          // unmute iframes that come into view after user tapped
           if (unmuted && e.isIntersecting && e.intersectionRatio >= 0.6) {
             const ifr = e.target.querySelector('.reel-embed iframe');
             if (ifr && ifr.src.includes('mute=1')) {
@@ -4873,12 +4885,10 @@
       const v = reelEl.querySelector('video');
       if (!unmuted) {
         unmuted = true;
-        feed.classList.add('unmuted');
         feed.querySelectorAll('video').forEach((x) => { x.muted = false; });
         feed.querySelectorAll('.reel-embed iframe').forEach((ifr) => {
           try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
         });
-        feed.querySelectorAll('.reel .reel-mute').forEach((m) => { m.innerHTML = IC.speaker; });
         if (v) v.play().catch(() => {});
       } else if (v && v.paused) v.play().catch(() => {});
       else if (v) v.pause();

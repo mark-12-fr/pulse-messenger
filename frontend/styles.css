@@ -1314,8 +1314,6 @@ html.resume #auth-screen { display: none; }
 .reel-video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .reel-embed { width: 100%; height: 100%; background: #000; display: flex; align-items: center; justify-content: center; }
 .reel-embed iframe { width: 100%; height: 100%; max-width: 100%; border: 0; }
-.reel-mute { position: absolute; top: calc(64px + var(--safe-top)); right: 14px; width: 38px; height: 38px; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.reels-feed.unmuted .reel-mute { display: none; }
 .reel-side { position: absolute; right: 12px; bottom: calc(120px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 20px; align-items: center; z-index: 2; }
 .reel-like, .reel-del { background: none; border: none; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; filter: drop-shadow(0 1px 4px rgba(0,0,0,.55)); transition: transform .12s var(--ease); }
 .reel-like:active, .reel-del:active { transform: scale(.85); }
