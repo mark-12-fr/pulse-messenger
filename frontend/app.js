@@ -4717,13 +4717,16 @@
     function openReels() {
       view.classList.remove('hidden');
       document.body.classList.add('reels-open');
+      // restore iframes that were cleared on close
+      feed.querySelectorAll('.reel-embed iframe[data-src]').forEach((ifr) => { ifr.src = ifr.dataset.src; delete ifr.dataset.src; });
       if (!reels.length) loadReels(true);
       else observeReels();
     }
     function closeReels() {
       view.classList.add('hidden');
       document.body.classList.remove('reels-open');
-      feed.querySelectorAll('video').forEach((v) => v.pause());
+      feed.querySelectorAll('video').forEach((v) => { v.pause(); v.src = ''; v.load(); });
+      feed.querySelectorAll('.reel-embed iframe').forEach((ifr) => { ifr.dataset.src = ifr.src; ifr.src = ''; });
       if (io) io.disconnect();
     }
 
