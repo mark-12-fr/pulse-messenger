@@ -60,7 +60,6 @@ self.addEventListener('push', (event) => {
       badge: '/icon-192.png',
       tag,
       renotify: true,
-      silent: true,
       vibrate: data.type === 'call' ? [200, 100, 200, 100, 200, 100, 400] : [120, 60, 120, 60, 120],
       requireInteraction: data.type === 'call',
       data: { type: data.type || 'message', callId: data.callId || null, fromUserId: data.fromUserId || null, media: data.media || null, conversationId: data.conversationId || null },
