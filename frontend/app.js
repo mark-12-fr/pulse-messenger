@@ -4735,6 +4735,10 @@
       if (first) {
         const v = first.querySelector('video');
         if (v) { v.muted = false; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
+        const ifr = first.querySelector('iframe');
+        if (ifr && ifr.src && ifr.src.includes('mute=1')) {
+          try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
+        }
       }
     }
     function closeReels() {
@@ -4775,7 +4779,7 @@
       if (r.author) el.dataset.uid = r.author.id;
       const isEmbed = r.source === 'youtube' || r.source === 'tiktok';
       const mediaHtml = isEmbed
-        ? `<div class="reel-embed"><iframe src="${escapeHtml(r.videoUrl)}" frameborder="0" allow="autoplay; encrypted-media; accelerometer; gyroscope" allowfullscreen loading="lazy"></iframe></div>`
+        ? `<div class="reel-embed"><iframe src="${escapeHtml(r.videoUrl)}" frameborder="0" allow="autoplay; encrypted-media; accelerometer; gyroscope" allowfullscreen></iframe></div>`
         : `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline preload="metadata"></video>`;
       el.innerHTML =
         mediaHtml +
@@ -4799,6 +4803,10 @@
         entries.forEach((e) => {
           const v = e.target.querySelector('video');
           const ifr = e.target.querySelector('.reel-embed iframe');
+          // restore iframe as soon as it enters the viewport (not just at 60%)
+          if (e.isIntersecting) {
+            if (ifr && !ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
+          }
           if (e.isIntersecting && e.intersectionRatio >= 0.6) {
             // restore & play video
             if (v) {
@@ -4806,12 +4814,9 @@
               v.muted = !unmuted;
               v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
             }
-            // restore & unmute iframe
-            if (ifr) {
-              if (!ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
-              if (ifr.src.includes('mute=1')) {
-                try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
-              }
+            // unmute iframe
+            if (ifr && ifr.src.includes('mute=1')) {
+              try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
             }
           } else {
             if (v) v.pause();
@@ -4912,7 +4917,8 @@
       clearTimeout(_trimTimer);
       _trimTimer = setTimeout(() => {
         const fr = feed.getBoundingClientRect();
-        const h = fr.height || 800;
+        const viewports = 3;
+        const h = (fr.height || 800) * viewports;
         const top = fr.top - h;
         const bot = fr.bottom + h;
         feed.querySelectorAll('.reel').forEach((el) => {

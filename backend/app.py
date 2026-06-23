@@ -44,6 +44,7 @@ import re
 import os
 import time
 import secrets
+import threading
 import functools
 import ipaddress
 import xml.etree.ElementTree as ET
@@ -183,8 +184,35 @@ try:
         s.execute(db.delete(db.Reel).where(db.Reel.user_id == tea_id))
 except Exception:
     pass
-
 _fetch_and_seed_shorts()
+
+# Background thread: delete auto-fetched reels >60s after server starts.
+
+def _cleanup_long_reels():
+    try:
+        tid = db.get_or_create_tea_user()
+        with db.session_scope() as s:
+            rows = s.execute(db.select(db.Reel).where(db.Reel.user_id == tid)).scalars().all()
+        for r in rows:
+            m = re.search(r'/embed/([\w-]{11})', r.video_url)
+            v = m.group(1) if m else None
+            if not v:
+                continue
+            try:
+                resp = requests.get(f"https://www.youtube.com/watch?v={v}", timeout=5,
+                                    headers={"User-Agent": "Mozilla/5.0"})
+                dm = re.search(r'"lengthSeconds":"(\d+)"', resp.text)
+                if dm and int(dm.group(1)) > 61:
+                    with db.session_scope() as s2:
+                        r2 = s2.get(db.Reel, r.id)
+                        if r2:
+                            s2.delete(r2)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+threading.Thread(target=_cleanup_long_reels, daemon=True).start()
 
 # Keep JWT_SECRET stable across restarts so logins persist forever (until the user
 # logs out). Prefer the env var; otherwise load — or generate once and store — it
