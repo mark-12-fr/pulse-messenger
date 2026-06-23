@@ -4804,7 +4804,7 @@
             if (v) {
               if (!v.src && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
               v.muted = !unmuted;
-              v.play().catch(() => setTimeout(() => v.play().catch(() => {}), 500));
+              v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
             }
             // restore & unmute iframe
             if (ifr) {

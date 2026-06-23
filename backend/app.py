@@ -50,6 +50,7 @@ import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from html import unescape as _html_unescape
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -133,12 +134,31 @@ _SHORTS_CHANNELS = [
 ]
 
 
+def _get_duration(vid):
+    """Check video duration from YouTube watch page. Returns seconds or None."""
+    try:
+        r = requests.get(
+            f"https://www.youtube.com/watch?v={vid}",
+            timeout=5,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Range": "bytes=0-80000",
+            },
+        )
+        m = re.search(r'"lengthSeconds":"(\d+)"', r.text)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
 def _fetch_and_seed_shorts():
-    """Pull latest YouTube Shorts from channels and seed unseen ones as reels."""
+    """Pull latest YouTube Shorts from channels, filter to <60 s, seed as reels."""
     ns = {"atom": "http://www.w3.org/2005/Atom"}
-    seeded = 0
+    candidates = []
     for cid in _SHORTS_CHANNELS:
-        if seeded >= 50:
+        if len(candidates) >= 50:
             break
         try:
             resp = requests.get(
@@ -149,8 +169,8 @@ def _fetch_and_seed_shorts():
             if resp.status_code != 200:
                 continue
             root = ET.fromstring(resp.content)
-            for entry in list(root.findall("atom:entry", ns))[:4]:
-                if seeded >= 50:
+            for entry in list(root.findall("atom:entry", ns))[:5]:
+                if len(candidates) >= 50:
                     break
                 link_el = entry.find("atom:link", ns)
                 href = (link_el.get("href") or "") if link_el is not None else ""
@@ -167,12 +187,28 @@ def _fetch_and_seed_shorts():
                     continue
                 title_el = entry.find("atom:title", ns)
                 caption = (title_el.text or "")[:200] if title_el is not None else ""
-                embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&loop=1&playlist={vid}&rel=0"
-                try:
-                    db.ensure_reel_exists(embed, caption)
-                    seeded += 1
-                except Exception:
-                    continue
+                candidates.append((vid, caption))
+        except Exception:
+            continue
+    # Check durations concurrently — keep only videos ≤ 60 seconds
+    short_vids = set()
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        fut_map = {pool.submit(_get_duration, vid): (vid, cap) for vid, cap in candidates}
+        for fut in as_completed(fut_map):
+            vid, cap = fut_map[fut]
+            dur = fut.result()
+            if dur is not None and dur <= 61:
+                short_vids.add(vid)
+    seeded = 0
+    for vid, caption in candidates:
+        if seeded >= 50:
+            break
+        if vid not in short_vids:
+            continue
+        embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&loop=1&playlist={vid}&rel=0"
+        try:
+            db.ensure_reel_exists(embed, caption)
+            seeded += 1
         except Exception:
             continue
 
