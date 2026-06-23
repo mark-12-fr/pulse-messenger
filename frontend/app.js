@@ -4798,20 +4798,24 @@
       io = new IntersectionObserver((entries) => {
         entries.forEach((e) => {
           const v = e.target.querySelector('video');
-          if (v) {
-            if (e.isIntersecting && e.intersectionRatio >= 0.6) {
-              v.muted = !unmuted;
-              v.play().catch(() => {});
-            } else { v.pause(); }
-          }
+          const ifr = e.target.querySelector('.reel-embed iframe');
           if (e.isIntersecting && e.intersectionRatio >= 0.6) {
-            const ifr = e.target.querySelector('.reel-embed iframe');
+            // restore & play video
+            if (v) {
+              if (!v.src && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
+              v.muted = !unmuted;
+              v.play().catch(() => setTimeout(() => v.play().catch(() => {}), 500));
+            }
+            // restore & unmute iframe
             if (ifr) {
               if (!ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
               if (ifr.src.includes('mute=1')) {
                 try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
               }
             }
+          } else {
+            if (v) v.pause();
+          }
           }
           const id = Number(e.target.dataset.id);
           if (id && !viewed.has(id)) {
@@ -4902,16 +4906,16 @@
       trimReels();
     }, { passive: true });
 
-    // Unload off-screen reels to free memory (YouTube iframes are ~80 MB each).
-    // Keep the container div for layout stability; just clear the iframe/video src.
-    // When the reel comes back into view the IntersectionObserver reloads it.
+    // Unload far-off-screen reels to free memory. Keep ±1 viewport loaded so
+    // scrolling up/down feels instant — no white flashes from iframe reload.
     let _trimTimer = null;
     function trimReels() {
       clearTimeout(_trimTimer);
       _trimTimer = setTimeout(() => {
         const fr = feed.getBoundingClientRect();
-        const top = fr.top - 200;
-        const bot = fr.bottom + 200;
+        const h = fr.height || 800;
+        const top = fr.top - h;
+        const bot = fr.bottom + h;
         feed.querySelectorAll('.reel').forEach((el) => {
           const r = el.getBoundingClientRect();
           const offScreen = r.bottom < top || r.top > bot;
