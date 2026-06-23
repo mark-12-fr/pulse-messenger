@@ -175,6 +175,7 @@ def _fetch_and_seed_shorts():
                     continue
         except Exception:
             continue
+    print(f"[reels] seeded {seeded} videos from {len(_SHORTS_CHANNELS)} channels")
 
 
 # Remove old auto-fetched reels so stale entries don't accumulate
@@ -213,6 +214,7 @@ def _cleanup_long_reels():
         pass
 
 threading.Thread(target=_cleanup_long_reels, daemon=True).start()
+print("[reels] background cleanup thread started")
 
 # Keep JWT_SECRET stable across restarts so logins persist forever (until the user
 # logs out). Prefer the env var; otherwise load — or generate once and store — it
