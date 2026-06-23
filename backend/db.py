@@ -1441,21 +1441,51 @@ def delete_reel(reel_id, user_id):
         return True
 
 
-SAMPLE_REELS = [
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", "caption": "Fire dance 🔥"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", "caption": "Escape the ordinary ✈️"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", "caption": "Good vibes only ✨"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4", "caption": "Joyride time 🚗"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4", "caption": "When the code finally works 😅"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4", "caption": "Off-road mode 🏔️"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4", "caption": "New ride who dis? 🚗✨"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4", "caption": "Let's go! 🏎️💨"},
-    {"videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatDoesSantaDoOnHisDayOff.mp4", "caption": "Me on a Sunday 😂"},
+SAMPLE_REEL_URLS = [
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatDoesSantaDoOnHisDayOff.mp4",
+    "https://www.w3schools.com/html/mov_bbb.mp4",
+]
+
+SAMPLE_CAPTIONS = [
+    "Fire dance 🔥",
+    "Escape the ordinary ✈️",
+    "Good vibes only ✨",
+    "Joyride time 🚗",
+    "When the code finally works 😅",
+    "Off-road mode 🏔️",
+    "New ride who dis? 🚗✨",
+    "Let's go! 🏎️💨",
+    "Me on a Sunday 😂",
+    "Morning routine ☀️",
+    "Late night grind 🌙",
+    "Weekend vibes 🎉",
+    "POV: You're winning 🏆",
+    "Perfect loop 🌀",
+    "Can't stop watching 👀",
 ]
 
 
+def _daily_sample_reels():
+    """Pick a deterministic daily subset so users see different reels each day."""
+    today = datetime.now(timezone.utc).date()
+    day_offset = today.toordinal() % len(SAMPLE_REEL_URLS)
+    urls = SAMPLE_REEL_URLS[day_offset:] + SAMPLE_REEL_URLS[:day_offset]
+    count = min(9, len(urls))
+    # Pick matching captions (wrap around if fewer captions than urls)
+    caps = SAMPLE_CAPTIONS * (count // len(SAMPLE_CAPTIONS) + 1)
+    return [{"videoUrl": urls[i], "caption": caps[i]} for i in range(count)]
+
+
 def seed_sample_reels():
-    """Seed sample reels once when the Tea account has none."""
+    """Re-seed Tea's reels daily with a fresh set so users see different videos each day."""
     with session_scope() as s:
         tea = s.execute(select(User).where(User.username == "_tea_")).scalar_one_or_none()
         if not tea:
@@ -1467,12 +1497,22 @@ def seed_sample_reels():
             )
             s.add(tea)
             s.flush()
-        existing = s.execute(
-            select(func.count(Reel.id)).where(Reel.user_id == tea.id)
+        # If today's reels are already seeded, skip
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        todays_count = s.execute(
+            select(func.count(Reel.id)).where(
+                Reel.user_id == tea.id, Reel.created_at >= today_start
+            )
         ).scalar_one()
-        if existing > 0:
+        if todays_count > 0:
             return
-        for sample in SAMPLE_REELS:
+        # Remove old sample reels
+        stale = s.execute(select(Reel).where(Reel.user_id == tea.id)).scalars().all()
+        for r in stale:
+            s.delete(r)
+        s.flush()
+        # Seed today's set
+        for sample in _daily_sample_reels():
             s.add(Reel(
                 user_id=tea.id,
                 video_url=sample["videoUrl"],
