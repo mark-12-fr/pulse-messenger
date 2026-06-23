@@ -4352,6 +4352,7 @@
     shareArrow: '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/></svg>',
     trash: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
     muted: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m23 9-6 6M17 9l6 6"/></svg>',
+    speaker: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M18 8a5 5 0 0 1 0 8M21 5a9 9 0 0 1 0 14"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];
@@ -4760,7 +4761,7 @@
         : `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline muted preload="metadata"></video>`;
       el.innerHTML =
         mediaHtml +
-        `<div class="reel-mute">${IC.muted}</div>
+        `<div class="reel-mute">${unmuted ? IC.speaker : IC.muted}</div>
         <div class="reel-side">
           <button class="reel-act reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
           <button class="reel-act" data-comment aria-label="Comments">${IC.comment}<span class="reel-cmt-n">${r.commentCount || 0}</span></button>
@@ -4786,6 +4787,13 @@
               v.muted = !unmuted;
               v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
             } else { v.pause(); }
+          }
+          // unmute iframes that come into view after user tapped
+          if (unmuted && e.isIntersecting && e.intersectionRatio >= 0.6) {
+            const ifr = e.target.querySelector('.reel-embed iframe');
+            if (ifr && ifr.src.includes('mute=1')) {
+              try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
+            }
           }
           const id = Number(e.target.dataset.id);
           if (id && !viewed.has(id)) {
@@ -4860,14 +4868,17 @@
       }
       // tap the video: first tap unmutes everything; after that, toggle play/pause
       const v = reelEl.querySelector('video');
-      if (!v) return;
       if (!unmuted) {
         unmuted = true;
         feed.classList.add('unmuted');
         feed.querySelectorAll('video').forEach((x) => { x.muted = false; });
-        v.play().catch(() => {});
-      } else if (v.paused) v.play().catch(() => {});
-      else v.pause();
+        feed.querySelectorAll('.reel-embed iframe').forEach((ifr) => {
+          try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
+        });
+        feed.querySelectorAll('.reel .reel-mute').forEach((m) => { m.innerHTML = IC.speaker; });
+        if (v) v.play().catch(() => {});
+      } else if (v && v.paused) v.play().catch(() => {});
+      else if (v) v.pause();
     });
 
     feed.addEventListener('scroll', () => {
