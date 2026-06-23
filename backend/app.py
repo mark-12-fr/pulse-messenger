@@ -132,27 +132,8 @@ _SHORTS_CHANNELS = [
     "UCqFMgrQ3mEDIp0S8Q7BrH1g",  # Sports Illustrated
 ]
 
-
-def _get_duration(vid):
-    """Check video duration from YouTube watch page. Returns seconds or None."""
-    try:
-        r = requests.get(
-            f"https://www.youtube.com/watch?v={vid}",
-            timeout=8,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            },
-        )
-        m = re.search(r'"lengthSeconds":"(\d+)"', r.text)
-        if m:
-            return int(m.group(1))
-    except Exception:
-        pass
-    return None
-
-
 def _fetch_and_seed_shorts():
-    """Pull latest YouTube Shorts from channels, filter to <60 s, seed as reels."""
+    """Pull latest YouTube Shorts from channels and seed unseen ones as reels."""
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     seeded = 0
     for cid in _SHORTS_CHANNELS:
@@ -183,10 +164,6 @@ def _fetch_and_seed_shorts():
                 vid = m if isinstance(m, str) else (m.group(1) if m else None)
                 if not vid:
                     continue
-                # Skip if definitely longer than 60 seconds (failsafe: create anyway if check fails)
-                dur = _get_duration(vid)
-                if dur is not None and dur > 61:
-                    continue
                 title_el = entry.find("atom:title", ns)
                 caption = (title_el.text or "")[:200] if title_el is not None else ""
                 embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&loop=1&playlist={vid}&rel=0"
@@ -199,7 +176,7 @@ def _fetch_and_seed_shorts():
             continue
 
 
-# Remove old auto-fetched reels so only short videos (≤60s) remain
+# Remove old auto-fetched reels so stale entries don't accumulate
 try:
     tea_id = db.get_or_create_tea_user()
     with db.session_scope() as s:
