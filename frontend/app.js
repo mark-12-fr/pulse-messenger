@@ -4735,10 +4735,6 @@
       if (first) {
         const v = first.querySelector('video');
         if (v) { v.muted = false; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
-        const ifr = first.querySelector('iframe');
-        if (ifr && ifr.src && ifr.src.includes('mute=1')) {
-          try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
-        }
       }
     }
     function closeReels() {
@@ -4813,10 +4809,6 @@
               if (!v.src && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
               v.muted = !unmuted;
               v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-            }
-            // unmute iframe
-            if (ifr && ifr.src.includes('mute=1')) {
-              try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
             }
           } else {
             if (v) v.pause();
