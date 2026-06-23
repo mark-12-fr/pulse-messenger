@@ -307,6 +307,8 @@ def init_db():
     _migrate_column("conversations", "description", "TEXT")
     _migrate_column("messages", "consumed", "BOOLEAN DEFAULT FALSE")
     _migrate_column("notes", "expires_at", "TIMESTAMPTZ")
+    # Seed sample reels so new users see content immediately
+    seed_sample_reels()
 
 
 def _migrate_column(table, column, coldef):
@@ -1422,6 +1424,39 @@ def delete_reel(reel_id, user_id):
             return False
         s.delete(r)
         return True
+
+
+SAMPLE_REELS = [
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", "caption": "Fire dance 🔥"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", "caption": "Escape the ordinary ✈️"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", "caption": "Good vibes only ✨"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4", "caption": "Joyride time 🚗"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4", "caption": "Oops! 😅"},
+]
+
+
+def seed_sample_reels():
+    """Seed the reels table with demo videos when it's empty (TikTok/FB-style)."""
+    with session_scope() as s:
+        count = s.execute(select(func.count(Reel.id))).scalar_one()
+        if count > 0:
+            return
+        tea = s.execute(select(User).where(User.username == "_tea_")).scalar_one_or_none()
+        if not tea:
+            tea = User(
+                username="_tea_",
+                display_name="Tea 🍵",
+                password_hash="__no_login__",
+            )
+            s.add(tea)
+            s.flush()
+        for sample in SAMPLE_REELS:
+            s.add(Reel(
+                user_id=tea.id,
+                video_url=sample["videoUrl"],
+                caption=sample["caption"],
+                created_at=now_utc(),
+            ))
 
 
 # ---------------------------------------------------------------------------
