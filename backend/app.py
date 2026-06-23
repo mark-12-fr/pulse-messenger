@@ -958,6 +958,24 @@ def clear_note():
 # ---------------------------------------------------------------------------
 # Reels (short videos)
 # ---------------------------------------------------------------------------
+LINK_PATTERNS = [
+    (r'(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/shorts/)([\w-]{11})', 'youtube'),
+    (r'tiktok\.com/@[\w.]+/video/(\d+)', 'tiktok'),
+]
+
+
+def _parse_video_link(url):
+    for pattern, platform in LINK_PATTERNS:
+        m = re.search(pattern, url)
+        if m:
+            vid = m.group(1)
+            if platform == 'youtube':
+                return f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0", platform
+            elif platform == 'tiktok':
+                return f"https://www.tiktok.com/embed/v2/{vid}", platform
+    return None, None
+
+
 @app.post("/api/reels")
 @auth_required
 def create_reel():
@@ -967,6 +985,22 @@ def create_reel():
     if not video_url:
         return jsonify(error="No video."), 400
     reel = db.create_reel(g.user["id"], video_url, caption)
+    return jsonify(reel=reel)
+
+
+@app.post("/api/reels/link")
+@auth_required
+def create_reel_from_link():
+    """Create a reel from a YouTube Shorts or TikTok link."""
+    data = request.get_json(silent=True) or {}
+    url = str(data.get("url") or "").strip()
+    caption = str(data.get("caption") or "").strip()[:500]
+    if not url:
+        return jsonify(error="No link."), 400
+    embed_url, platform = _parse_video_link(url)
+    if not embed_url:
+        return jsonify(error="Unsupported. Paste a YouTube Shorts or TikTok link."), 400
+    reel = db.create_reel(g.user["id"], embed_url, caption)
     return jsonify(reel=reel)
 
 

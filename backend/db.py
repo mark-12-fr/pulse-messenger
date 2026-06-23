@@ -1277,10 +1277,17 @@ def blocked_ids(me_id):
 # Reels (short videos)
 # ---------------------------------------------------------------------------
 def public_reel(r, author, like_count, liked_by_me, comment_count=0, followed=False):
+    url = r.video_url or ""
+    source = "upload"
+    if "youtube.com/embed/" in url or "youtu.be/" in url:
+        source = "youtube"
+    elif "tiktok.com/embed/" in url:
+        source = "tiktok"
     return {
         "id": r.id,
-        "videoUrl": r.video_url,
+        "videoUrl": url,
         "caption": r.caption or "",
+        "source": source,
         "author": author,
         "likeCount": int(like_count or 0),
         "likedByMe": bool(liked_by_me),

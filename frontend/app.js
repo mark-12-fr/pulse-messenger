@@ -4751,11 +4751,16 @@
       const el = document.createElement('div');
       el.className = 'reel';
       el.dataset.id = r.id;
+      el.dataset.source = r.source || 'upload';
       const mine = state.me && r.author && r.author.id === state.me.id;
       if (r.author) el.dataset.uid = r.author.id;
+      const isEmbed = r.source === 'youtube' || r.source === 'tiktok';
+      const mediaHtml = isEmbed
+        ? `<div class="reel-embed"><iframe src="${escapeHtml(r.videoUrl)}" frameborder="0" allow="autoplay; encrypted-media; accelerometer; gyroscope" allowfullscreen loading="lazy"></iframe></div>`
+        : `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline muted preload="metadata"></video>`;
       el.innerHTML =
-        `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline muted preload="metadata"></video>
-        <div class="reel-mute">${IC.muted}</div>
+        mediaHtml +
+        `<div class="reel-mute">${IC.muted}</div>
         <div class="reel-side">
           <button class="reel-act reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
           <button class="reel-act" data-comment aria-label="Comments">${IC.comment}<span class="reel-cmt-n">${r.commentCount || 0}</span></button>
@@ -4765,7 +4770,7 @@
         <div class="reel-meta">
           <div class="reel-author">${avatarHtml(r.author || { displayName: '?' }, { cls: 'sm' })}<span class="reel-author-name">${escapeHtml((r.author && r.author.displayName) || 'Someone')}</span>${mine ? '' : `<button class="reel-follow ${r.followed ? 'on' : ''}" data-follow>${r.followed ? 'Following' : 'Follow'}</button>`}</div>
           ${r.caption ? `<div class="reel-caption">${escapeHtml(r.caption)}</div>` : ''}
-          <div class="reel-views"><span class="reel-views-n">${r.views || 0}</span> views</div>
+          <div class="reel-views"><span class="reel-views-n">${r.views || 0}</span> views${isEmbed ? ' · <span class="reel-source">' + (r.source === 'youtube' ? 'YouTube' : 'TikTok') + '</span>' : ''}</div>
         </div>`;
       return el;
     }
@@ -4776,19 +4781,20 @@
       io = new IntersectionObserver((entries) => {
         entries.forEach((e) => {
           const v = e.target.querySelector('video');
-          if (!v) return;
-          if (e.isIntersecting && e.intersectionRatio >= 0.6) {
-            v.muted = !unmuted;
-            v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-            const id = Number(e.target.dataset.id);
-            if (id && !viewed.has(id)) {
-              viewed.add(id);
-              api('/api/reels/' + id + '/view', { method: 'POST' }).then((res) => {
-                const n = e.target.querySelector('.reel-views-n');
-                if (n && res && typeof res.views === 'number') n.textContent = res.views;
-              }).catch(() => {});
-            }
-          } else { v.pause(); }
+          if (v) {
+            if (e.isIntersecting && e.intersectionRatio >= 0.6) {
+              v.muted = !unmuted;
+              v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+            } else { v.pause(); }
+          }
+          const id = Number(e.target.dataset.id);
+          if (id && !viewed.has(id)) {
+            viewed.add(id);
+            api('/api/reels/' + id + '/view', { method: 'POST' }).then((res) => {
+              const n = e.target.querySelector('.reel-views-n');
+              if (n && res && typeof res.views === 'number') n.textContent = res.views;
+            }).catch(() => {});
+          }
         });
       }, { root: feed, threshold: [0, 0.6, 1] });
       feed.querySelectorAll('.reel').forEach((el) => io.observe(el));
@@ -4935,12 +4941,75 @@
       } catch (e2) { toast('⚠️', 'Failed', e2.message || 'Could not post'); }
     }
 
+    function openReelLinkCompose() {
+      feed.querySelectorAll('video').forEach((v) => v.pause());
+      const overlay = document.createElement('div');
+      overlay.className = 'msg-menu reel-compose';
+      overlay.innerHTML = `
+        <div class="mm-sheet">
+          <div class="settings-title">Share a link</div>
+          <div class="rc-compose">
+            <input id="rc-link-input" placeholder="Paste YouTube Shorts or TikTok link…" style="border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--field);color:var(--text);font-size:15px;outline:none">
+            <input id="rc-cap-link" maxlength="500" placeholder="Add a caption… (optional)">
+          </div>
+          <div class="mm-actions">
+            <button class="mm-act primary" id="rc-post-link">Post reel</button>
+            <button class="mm-act" data-cancel="1">Cancel</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      overlay.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-cancel]') || e.target === overlay) { overlay.remove(); resumeCurrentReel(); return; }
+        if (e.target.closest('#rc-post-link')) {
+          const url = (overlay.querySelector('#rc-link-input').value || '').trim();
+          const caption = (overlay.querySelector('#rc-cap-link').value || '').slice(0, 500);
+          if (!url) { toast('⚠️', 'No link', 'Paste a YouTube Shorts or TikTok link'); return; }
+          overlay.remove();
+          await postReelFromLink(url, caption);
+        }
+      });
+    }
+
+    async function postReelFromLink(url, caption) {
+      toast('🔗', 'Creating', 'Adding to your reels…');
+      try {
+        const { reel } = await api('/api/reels/link', { method: 'POST', body: { url, caption } });
+        reels.unshift(reel);
+        if (feed.querySelector('.reels-empty')) feed.innerHTML = '';
+        feed.insertBefore(renderReel(reel), feed.firstChild);
+        feed.scrollTo({ top: 0 });
+        observeReels();
+        toast('✅', 'Posted', 'Reel from link is live!');
+      } catch (e2) { toast('⚠️', 'Failed', e2.message || 'Unsupported link'); }
+    }
+
     const reelsBtn = document.getElementById('reels-btn');
     if (reelsBtn) reelsBtn.addEventListener('click', openReels);
     const closeBtn = document.getElementById('reels-close');
     if (closeBtn) closeBtn.addEventListener('click', closeReels);
     const addBtn = document.getElementById('reels-add');
-    if (addBtn) addBtn.addEventListener('click', () => reelInput && reelInput.click());
+    if (addBtn) addBtn.addEventListener('click', () => {
+      // Show options: Upload video or Paste YouTube/TikTok link
+      const overlay = document.createElement('div');
+      overlay.className = 'msg-menu reel-compose';
+      overlay.innerHTML = `
+        <div class="mm-sheet" style="max-width:340px">
+          <div class="settings-title">New reel</div>
+          <div style="display:flex;flex-direction:column;gap:10px;padding:8px 0">
+            <button class="mm-act primary" id="rc-upload" style="justify-content:center">Upload video</button>
+            <button class="mm-act" id="rc-link" style="justify-content:center">Paste YouTube / TikTok link</button>
+            <button class="mm-act" data-cancel="1" style="justify-content:center">Cancel</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      overlay.addEventListener('click', (e) => {
+        if (e.target.closest('[data-cancel]') || e.target === overlay) { overlay.remove(); return; }
+        if (e.target.closest('#rc-upload')) { overlay.remove(); reelInput.click(); }
+        if (e.target.closest('#rc-link')) { overlay.remove(); openReelLinkCompose(); }
+      });
+    });
     document.querySelectorAll('.reels-tab').forEach((t) => t.addEventListener('click', () => {
       const mode = t.dataset.feed;
       if (mode === feedMode) return;
