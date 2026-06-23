@@ -4816,7 +4816,6 @@
           } else {
             if (v) v.pause();
           }
-          }
           const id = Number(e.target.dataset.id);
           if (id && !viewed.has(id)) {
             viewed.add(id);
