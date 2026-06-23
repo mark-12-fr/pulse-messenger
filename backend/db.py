@@ -1448,6 +1448,7 @@ def seed_sample_reels():
                 username="_tea_",
                 display_name="Tea 🍵",
                 password_hash="__no_login__",
+                avatar_color="#7c3aed",
             )
             s.add(tea)
             s.flush()
