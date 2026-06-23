@@ -1431,7 +1431,11 @@ SAMPLE_REELS = [
     {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", "caption": "Escape the ordinary ✈️"},
     {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", "caption": "Good vibes only ✨"},
     {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4", "caption": "Joyride time 🚗"},
-    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4", "caption": "Oops! 😅"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4", "caption": "When the code finally works 😅"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4", "caption": "Off-road mode 🏔️"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4", "caption": "New ride who dis? 🚗✨"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4", "caption": "Let's go! 🏎️💨"},
+    {"videoUrl": "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatDoesSantaDoOnHisDayOff.mp4", "caption": "Me on a Sunday 😂"},
 ]
 
 
