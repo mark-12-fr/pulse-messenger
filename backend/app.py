@@ -98,12 +98,19 @@ _SHORTS_CHANNELS = [
     "UCRij8kUCa1lUQrR6HjX7i0g",  # Dude Perfect
     "UCmUcrYp7s-pjC_nXbHMC_pQ",  # Zach King
     "UCUK0HBIBWgM2c4VsPhkYY4w",  # The Slow Mo Guys
+    "UC-lHJZR3Gqxm24_Vd_AJ5Yw",  # PewDiePie
+    # Animation / Cartoons
+    "UCo8bcnLyZH8tBIH9V1mLgqQ",  # TheOdd1sOut
+    "UCGwu0nbY2wSkW8N-cghnLpA",  # JaidenAnimations
+    "UCYzPXprvl5Y-Sf0g4vX-m6g",  # Jacksepticeye
     # Science & Education
     "UCsXVk37bltHxD1rDPwtNM8Q",  # Kurzgesagt
     "UC6nSFpj9HTCZ5t-N3Rm3-HA",  # Vsauce
     "UCHnyfMqiRRG1u-2MsSQLbXA",  # Veritasium
     "UCY1kMZp36IQSyNx_9h4mpCg",  # Mark Rober
     "UC6107grRI4m0o2-emgoDnAA",  # SmarterEveryDay
+    "UCZYTClx2T1of7BRZ86-8fow",  # SciShow
+    "UCFhXFikryT4aFcLkLw2LBLA",  # NileRed
     # Tech
     "UCBJycsmduvYEL83R_U4JriQ",  # MKBHD
     "UCXuqSBlHAE6Xw-yeJA0Tunw",  # Linus Tech Tips
@@ -123,9 +130,6 @@ _SHORTS_CHANNELS = [
     # Sports
     "UCiWLfKzX45t3ZFLdRgGTCyQ",  # ESPN
     "UCqFMgrQ3mEDIp0S8Q7BrH1g",  # Sports Illustrated
-    # Music / Viral
-    "UC-9-kyTW8ZkZNDHQJ6FgpwQ",  # Music Shorts
-    "UC6dI8r7WrGfAr4Z0JGR1bRg",  # Dance Shorts
 ]
 
 
