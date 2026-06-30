@@ -4839,6 +4839,15 @@
       return el;
     }
 
+    // Control a YouTube embed (mute/unMute/play) via the IFrame API postMessage.
+    function ytCmd(ifr, func, args) {
+      try {
+        if (ifr && ifr.contentWindow) {
+          ifr.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: args || [] }), '*');
+        }
+      } catch (e) {}
+    }
+
     function observeReels() {
       if (io) io.disconnect();
       io = new IntersectionObserver((entries) => {
@@ -4856,8 +4865,11 @@
               v.muted = !unmuted;
               v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
             }
+            // carry the sound setting onto the now-centred YouTube embed
+            if (ifr && unmuted) { setTimeout(() => { ytCmd(ifr, 'unMute'); ytCmd(ifr, 'setVolume', [100]); ytCmd(ifr, 'playVideo'); }, 600); }
           } else {
             if (v) v.pause();
+            if (ifr) ytCmd(ifr, 'mute'); // keep off-screen embeds quiet
           }
           const id = Number(e.target.dataset.id);
           if (id && !viewed.has(id)) {
@@ -4930,14 +4942,21 @@
         try { await api('/api/reels/' + id, { method: 'DELETE' }); reels = reels.filter((x) => x.id !== id); reelEl.remove(); } catch (_) {}
         return;
       }
-      // tap the video: first tap unmutes everything; after that, toggle play/pause
+      // tap to toggle sound on the YouTube embeds (and own videos).
       const v = reelEl.querySelector('video');
+      const ifr = reelEl.querySelector('.reel-embed iframe');
+      if (ifr) {
+        unmuted = !unmuted;
+        feed.querySelectorAll('.reel-embed iframe').forEach((f) => {
+          if (unmuted) { ytCmd(f, 'unMute'); ytCmd(f, 'setVolume', [100]); } else { ytCmd(f, 'mute'); }
+        });
+        const tapped = reelEl.querySelector('.reel-mute'); // flash the speaker icon
+        if (tapped) reelEl.classList.toggle('sound-on', unmuted);
+        return;
+      }
       if (!unmuted) {
         unmuted = true;
         feed.querySelectorAll('video').forEach((x) => { x.muted = false; });
-        feed.querySelectorAll('.reel-embed iframe').forEach((ifr) => {
-          try { const u = new URL(ifr.src); u.searchParams.delete('mute'); ifr.src = u.toString(); } catch (_) {}
-        });
         if (v) v.play().catch(() => {});
       } else if (v && v.paused) v.play().catch(() => {});
       else if (v) v.pause();
