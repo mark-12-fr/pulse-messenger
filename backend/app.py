@@ -162,7 +162,7 @@ def _fetch_and_seed_shorts():
                     continue
                 title_el = entry.find("atom:title", ns)
                 caption = (title_el.text or "")[:200] if title_el is not None else ""
-                embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0"
+                embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0&enablejsapi=1"
                 try:
                     db.ensure_reel_exists(embed, caption)
                     seeded += 1
@@ -1130,7 +1130,7 @@ def _parse_video_link(url):
         if m:
             vid = m.group(1)
             if platform == 'youtube':
-                return f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0", platform
+                return f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0&enablejsapi=1", platform
             elif platform == 'tiktok':
                 return f"https://www.tiktok.com/embed/v2/{vid}", platform
     return None, None
