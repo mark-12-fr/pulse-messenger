@@ -3419,17 +3419,61 @@
     micOff: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9v2a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 11a5 5 0 0 1-.54 2.27M5 11a7 7 0 0 0 11 5.66M12 18v3"/><path d="m2 2 20 20"/></svg>',
     cam: '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></svg>',
     camOff: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16H4a1 1 0 0 1-1-1V7M9.5 6H16a1 1 0 0 1 1 1v6l4-4v8M2 2l20 20"/></svg>',
+    flip: '<svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l1.5-2h2"/><path d="M20 9v8a2 2 0 0 1-2 2h-2"/><path d="M12 11a3 3 0 1 0 4 2.5"/><path d="m18 4 2 2-2 2"/></svg>',
   };
   let activeCall = null;
   let ringVibTimer = null;
 
-  let ringtoneEl = null;
+  // ---- call tones (Web Audio — unlocking is SILENT, so no stray sound on open)
   let callAudioCtx = null, ringStop = null, ringAudioTimer = null;
-  function stopRingAudio() {}
-  function startRingback() {}
-  function startRingtoneAudio() {}
-  function playConnectTone() {}
-  function playEndTone() {}
+  function ensureAudioCtx() {
+    try {
+      if (!callAudioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        callAudioCtx = new AC();
+      }
+      if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+      return callAudioCtx;
+    } catch (e) { return null; }
+  }
+  ['pointerdown', 'keydown', 'touchend'].forEach((ev) =>
+    window.addEventListener(ev, ensureAudioCtx, { once: true, passive: true }));
+  function chime(ctx, freqs, t0, dur, vol) {
+    const g = ctx.createGain();
+    g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.03);
+    g.gain.setValueAtTime(vol, t0 + Math.max(0.05, dur - 0.06));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    freqs.forEach((f) => { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.connect(g); o.start(t0); o.stop(t0 + dur + 0.03); });
+  }
+  function stopRingAudio() {
+    if (ringStop) { try { ringStop(); } catch (e) {} ringStop = null; }
+    clearTimeout(ringAudioTimer); ringAudioTimer = null;
+  }
+  function startRingback() {          // caller hears this gentle tone while calling
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    stopRingAudio();
+    let stopped = false;
+    const loop = () => { if (stopped) return; chime(ctx, [440, 480], ctx.currentTime + 0.04, 1.1, 0.06); ringAudioTimer = setTimeout(loop, 3200); };
+    loop(); ringStop = () => { stopped = true; };
+  }
+  function startRingtoneAudio() {      // callee hears this loud "ring-ring" for an incoming call
+    const ctx = ensureAudioCtx(); if (!ctx) return;
+    stopRingAudio();
+    let stopped = false;
+    const loop = () => {
+      if (stopped) return;
+      const t = ctx.currentTime + 0.04;
+      chime(ctx, [660, 524], t, 0.4, 0.26);
+      chime(ctx, [660, 524], t + 0.6, 0.4, 0.26);
+      ringAudioTimer = setTimeout(loop, 2000);
+    };
+    loop(); ringStop = () => { stopped = true; };
+  }
+  function playConnectTone() { const ctx = ensureAudioCtx(); if (!ctx) return; const t = ctx.currentTime + 0.02; chime(ctx, [660], t, 0.12, 0.09); chime(ctx, [880], t + 0.13, 0.18, 0.09); }
+  function playEndTone() { const ctx = ensureAudioCtx(); if (!ctx) return; const t = ctx.currentTime + 0.02; chime(ctx, [520], t, 0.12, 0.08); chime(ctx, [392], t + 0.13, 0.22, 0.08); }
 
   function callSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
@@ -3707,9 +3751,11 @@
       const camBtn = activeCall.media === 'video'
         ? `<button class="call-btn ${activeCall.camOff ? 'off' : ''}" id="call-camera" aria-label="Camera">${activeCall.camOff ? CALL_IC.camOff : CALL_IC.cam}</button>`
         : '';
+      const flipBtn = activeCall.media === 'video'
+        ? `<button class="call-btn" id="call-flip" aria-label="Flip camera">${CALL_IC.flip}</button>` : '';
       bar.innerHTML =
         `<button class="call-btn ${activeCall.muted ? 'off' : ''}" id="call-mute" aria-label="Mute">${activeCall.muted ? CALL_IC.micOff : CALL_IC.mic}</button>` +
-        camBtn +
+        camBtn + flipBtn +
         `<button class="call-btn hangup" id="call-end" aria-label="End call">${CALL_IC.hangup}</button>`;
     }
   }
@@ -3732,6 +3778,25 @@
     activeCall.local.getVideoTracks().forEach((t) => { t.enabled = !activeCall.camOff; });
     haptic(); renderCallActions();
   }
+  // Switch front/back camera mid-call (mobile) without dropping the call.
+  async function flipCamera() {
+    if (!activeCall || activeCall.media !== 'video' || !activeCall.local || !activeCall.pc) return;
+    const next = activeCall.facing === 'environment' ? 'user' : 'environment';
+    try {
+      const ns = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: next } });
+      const newTrack = ns.getVideoTracks()[0];
+      if (!newTrack) return;
+      const sender = activeCall.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) await sender.replaceTrack(newTrack);
+      const old = activeCall.local.getVideoTracks()[0];
+      if (old) { activeCall.local.removeTrack(old); old.stop(); }
+      activeCall.local.addTrack(newTrack);
+      newTrack.enabled = !activeCall.camOff;
+      activeCall.facing = next;
+      attachLocalVideo();
+      haptic();
+    } catch (e) { toast('⚠️', 'Camera', "Couldn't switch camera."); }
+  }
 
   function closeCallUI(reason) {
     const v = callView();
@@ -3742,12 +3807,12 @@
     if (reason) toast('📞', 'Call', reason);
   }
 
-  function startRinging() {
+  function startRinging() {        // callee: loud ringtone + vibration
     haptic(60);
+    startRingtoneAudio();
     try { if (navigator.vibrate) ringVibTimer = setInterval(() => navigator.vibrate([400, 220, 400]), 1500); } catch (e) {}
   }
   function stopRinging() {          // stops any ring (incoming OR outgoing) + vibration
-    if (ringtoneEl) { try { ringtoneEl.pause(); ringtoneEl.currentTime = 0; } catch (e) {} }
     stopRingAudio();
     if (ringVibTimer) { clearInterval(ringVibTimer); ringVibTimer = null; }
     try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
@@ -3794,6 +3859,7 @@
       if (e.target.closest('#call-end')) return hangUp(null, true);
       if (e.target.closest('#call-mute')) return toggleMute();
       if (e.target.closest('#call-camera')) return toggleCamera();
+      if (e.target.closest('#call-flip')) return flipCamera();
     });
   })();
 
