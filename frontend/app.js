@@ -467,6 +467,53 @@
       </div>`).join('');
   }
 
+  function showMessagesSkeleton() {
+    const box = $('#messages');
+    if (!box) return;
+    const rows = [['in', 'w1'], ['out', 'w2'], ['in', 'w3'], ['in', 'w1'], ['out', 'w2'], ['in', 'w3'], ['out', 'w1']];
+    box.innerHTML = `<div class="sk-msgs">${rows
+      .map(([s, w]) => `<div class="sk sk-bubble ${s} ${w}"></div>`)
+      .join('')}</div>`;
+  }
+
+  // Double-tap any message bubble for a quick heart burst. ✨ (visual only)
+  function heartBurstAt(x, y) {
+    const layer = document.createElement('div');
+    layer.className = 'tap-burst';
+    layer.style.left = x + 'px';
+    layer.style.top = y + 'px';
+    const hearts = ['❤️', '💖', '💕', '💗', '🥰'];
+    let h = '';
+    for (let i = 0; i < 6; i++) {
+      const dx = Math.round(Math.random() * 80 - 40);
+      const dy = Math.round(-34 - Math.random() * 56);
+      const r = Math.round(Math.random() * 70 - 35);
+      const delay = (Math.random() * 0.1).toFixed(2);
+      h += `<i style="--dx:${dx}px;--dy:${dy}px;--r:${r}deg;animation-delay:${delay}s">${hearts[i % hearts.length]}</i>`;
+    }
+    layer.innerHTML = h;
+    document.body.appendChild(layer);
+    setTimeout(() => layer.remove(), 1150);
+  }
+  document.addEventListener('dblclick', (e) => {
+    if (!(e.target.closest && e.target.closest('#messages .msg'))) return;
+    if (window.getSelection && String(window.getSelection())) return; // don't fire mid text-selection
+    heartBurstAt(e.clientX, e.clientY);
+  });
+  let _dtLast = 0, _dtX = 0, _dtY = 0;
+  document.addEventListener('touchend', (e) => {
+    const tp = e.changedTouches && e.changedTouches[0];
+    if (!tp) return;
+    const now = Date.now();
+    const near = Math.abs(tp.clientX - _dtX) < 44 && Math.abs(tp.clientY - _dtY) < 44;
+    if (now - _dtLast < 320 && near && e.target.closest && e.target.closest('#messages .msg')) {
+      heartBurstAt(tp.clientX, tp.clientY);
+      _dtLast = 0;
+    } else {
+      _dtLast = now; _dtX = tp.clientX; _dtY = tp.clientY;
+    }
+  }, { passive: true });
+
   function renderMeHeader() {
     const wrap = $('.me');
     wrap.querySelector('.avatar').outerHTML = avatarHtml(state.me);
@@ -949,7 +996,7 @@
     $('#peer-name').textContent = friendName(peer);
     updatePeerStatus();
 
-    $('#messages').innerHTML = `<div class="empty-note">Loading…</div>`;
+    showMessagesSkeleton();
 
     try {
       const data = await api('/api/conversations/' + conversationId + '/messages');
@@ -1000,7 +1047,7 @@
     applyWallpaper(cid);
     setCallButtonsVisible(false);
     renderGroupHeader(state.current.group);
-    $('#messages').innerHTML = `<div class="empty-note">Loading…</div>`;
+    showMessagesSkeleton();
 
     try {
       const data = await api('/api/conversations/' + cid + '/messages');
@@ -1387,6 +1434,8 @@
       sendBtn.innerHTML = micMode ? MIC_ICON : SEND_ICON;
       sendBtn.classList.toggle('mic-mode', micMode);
       sendBtn.title = micMode ? 'Record voice message' : 'Send';
+      // little pop as it morphs (restart the animation each toggle)
+      sendBtn.classList.remove('morph-pop'); void sendBtn.offsetWidth; sendBtn.classList.add('morph-pop');
     }
     sendBtn.disabled = micMode ? false : !hasContent;
   }
@@ -4378,7 +4427,13 @@
   // ============================================================
   const THEME_KEY = 'tea_theme';
   function applyTheme(t) {
-    document.documentElement.setAttribute('data-theme', t);
+    const root = document.documentElement;
+    // crossfade the colours for the switch, then drop the class so normal
+    // hover/press transitions aren't affected afterwards
+    root.classList.add('theme-anim');
+    clearTimeout(applyTheme._t);
+    applyTheme._t = setTimeout(() => root.classList.remove('theme-anim'), 520);
+    root.setAttribute('data-theme', t);
     const m = document.getElementById('theme-color-dyn');
     if (m) m.setAttribute('content', t === 'light' ? '#ffffff' : '#0a0a0f');
     try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
