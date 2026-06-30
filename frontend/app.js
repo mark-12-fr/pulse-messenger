@@ -3404,6 +3404,12 @@
         'stun:stun2.l.google.com:19302',
         'stun:stun3.l.google.com:19302',
       ] },
+      // Free TURN relay so calls connect even behind strict NATs / mobile
+      // carriers where direct peer-to-peer fails. (Overridden by the server's
+      // /api/ice-servers if a dedicated TURN is configured there.)
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
     ],
     // Connect faster: pre-gather a small candidate pool and bundle audio+video
     // onto a single transport so there's only one ICE negotiation.
@@ -3411,6 +3417,19 @@
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
   };
+  // Ask the server for its ICE/TURN list (lets a dedicated TURN be configured
+  // server-side later — via env vars — without shipping new frontend code).
+  // Falls back silently to the built-in public relay above on any failure.
+  let _iceLoaded = false;
+  function loadIceServers() {
+    if (_iceLoaded) return;
+    _iceLoaded = true;
+    api('/api/ice-servers').then((d) => {
+      if (d && Array.isArray(d.iceServers) && d.iceServers.length) {
+        RTC_CONFIG.iceServers = d.iceServers;
+      }
+    }).catch(() => { _iceLoaded = false; });
+  }
   const CALL_IC = {
     phone: '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.37 2.3.57 3.5.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.2.2 2.4.57 3.5a1 1 0 0 1-.24 1l-2.23 2.3Z"/></svg>',
     video: '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></svg>',
@@ -3481,6 +3500,7 @@
   function callView() { return document.getElementById('call-view'); }
 
   function registerCallHandlers(socket) {
+    loadIceServers();
     socket.on('call:incoming', onCallIncoming);
     socket.on('call:answered', onCallAnswered);
     socket.on('call:ice', onCallRemoteIce);

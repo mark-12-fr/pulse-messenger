@@ -1820,6 +1820,42 @@ def get_pending_call():
     return jsonify(call=call)
 
 
+# ICE/TURN servers for WebRTC. A TURN relay lets calls connect even when both
+# users are behind strict NATs / mobile carriers (no direct peer-to-peer path).
+# Set TURN_URL / TURN_USERNAME / TURN_CREDENTIAL env vars to use a dedicated
+# relay; otherwise we hand out a free public relay (best-effort).
+_TURN_URL = os.environ.get("TURN_URL", "").strip()
+_TURN_USER = os.environ.get("TURN_USERNAME", "").strip()
+_TURN_CRED = os.environ.get("TURN_CREDENTIAL", "").strip()
+
+
+def _ice_servers():
+    servers = [{
+        "urls": [
+            "stun:stun.l.google.com:19302",
+            "stun:stun1.l.google.com:19302",
+            "stun:stun2.l.google.com:19302",
+            "stun:stun3.l.google.com:19302",
+        ],
+    }]
+    if _TURN_URL and _TURN_USER and _TURN_CRED:
+        # Allow several comma-separated TURN URLs under one credential.
+        urls = [u.strip() for u in _TURN_URL.split(",") if u.strip()]
+        servers.append({"urls": urls, "username": _TURN_USER, "credential": _TURN_CRED})
+    else:
+        for u in ("turn:openrelay.metered.ca:80",
+                  "turn:openrelay.metered.ca:443",
+                  "turn:openrelay.metered.ca:443?transport=tcp"):
+            servers.append({"urls": u, "username": "openrelayproject", "credential": "openrelayproject"})
+    return servers
+
+
+@app.get("/api/ice-servers")
+@auth_required
+def get_ice_servers():
+    return jsonify(iceServers=_ice_servers())
+
+
 # ---------------------------------------------------------------------------
 # Poll — create as message, vote updates in-place
 # ---------------------------------------------------------------------------
