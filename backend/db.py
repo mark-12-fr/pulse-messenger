@@ -79,6 +79,8 @@ class User(Base):
     avatar_url = mapped_column(Text, nullable=True)
     token_version = mapped_column(Integer, nullable=False, default=0)
     privacy = mapped_column(Text, nullable=True)
+    avatar_frame = mapped_column(String(24), nullable=True)
+    mood = mapped_column(String(16), nullable=True)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -338,8 +340,22 @@ def public_user(u):
         "displayName": u.display_name,
         "avatarColor": u.avatar_color,
         "avatarUrl": u.avatar_url,
+        "frame": getattr(u, "avatar_frame", None),
+        "mood": getattr(u, "mood", None),
         "lastSeen": _iso(u.last_seen),
     }
+
+
+def set_user_style(user_id, frame=None, mood=None):
+    with session_scope() as s:
+        u = s.get(User, user_id)
+        if not u:
+            return None
+        if frame is not None:
+            u.avatar_frame = (frame or None)
+        if mood is not None:
+            u.mood = (mood or None)
+        return public_user(u)
 
 
 def public_message(m):

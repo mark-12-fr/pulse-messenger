@@ -284,6 +284,21 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 }
 .avatar.sm { width: 36px; height: 36px; min-width: 36px; font-size: 14px; }
 .avatar.lg { width: 46px; height: 46px; min-width: 46px; }
+/* avatar frames (apply to both avatars and the settings picker swatches) */
+.af-gold { box-shadow: 0 0 0 2.5px #f6c945, 0 0 8px #f6c94599 !important; }
+.af-cyan { box-shadow: 0 0 0 2.5px #19d3ff, 0 0 8px #19d3ff99 !important; }
+.af-pink { box-shadow: 0 0 0 2.5px #ff5ca8, 0 0 8px #ff5ca899 !important; }
+.af-green { box-shadow: 0 0 0 2.5px #25d366, 0 0 8px #25d36699 !important; }
+.af-violet { box-shadow: 0 0 0 2.5px #9b5cff, 0 0 8px #9b5cff99 !important; }
+.af-fire { box-shadow: 0 0 0 2.5px #ff6a3d, 0 0 9px #ff3d3daa !important; }
+.af-rainbow { box-shadow: 0 0 0 2px #ff5c5c, 0 0 0 4px #19d3ff, 0 0 8px #9b5cffaa !important; }
+.av-mood { position: absolute; bottom: -3px; right: -3px; font-size: 13px; line-height: 1; background: var(--panel); border-radius: 50%; padding: 1px 2px; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.avatar.sm .av-mood { font-size: 10px; bottom: -2px; right: -2px; }
+.frame-swatch { width: 36px; height: 36px; min-width: 36px; border-radius: 50%; border: none; background: var(--hover); color: var(--text-faint); display: inline-flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; }
+.frame-swatch.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+.moods { display: flex; flex-wrap: wrap; gap: 6px; }
+.mood-pick { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--hover); color: var(--text-faint); font-size: 18px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.mood-pick.on { outline: 2px solid var(--accent); outline-offset: 2px; }
 .avatar .av-img {
   position: absolute; inset: 0;
   width: 100%; height: 100%;

@@ -79,7 +79,9 @@
     const inner = user.avatarUrl
       ? `<img class="av-img" src="${escapeHtml(mediaUrl(user.avatarUrl))}" alt="" loading="lazy" />`
       : escapeHtml(initials(user.displayName));
-    return `<div class="avatar ${cls}" style="background:${color}">${inner}${dot}</div>`;
+    const frame = user.frame ? ' af-' + String(user.frame).replace(/[^a-z]/g, '') : '';
+    const mood = (user.mood && opts.mood !== false) ? `<span class="av-mood">${escapeHtml(user.mood)}</span>` : '';
+    return `<div class="avatar ${cls}${frame}" style="background:${color}">${inner}${dot}${mood}</div>`;
   }
 
   function fmtTime(iso) {
@@ -4484,9 +4486,25 @@
     });
   }
 
+  function applyMyStyle() {
+    const me = document.getElementById('me-avatar');
+    if (me && state.me) me.outerHTML = avatarHtml(state.me).replace('class="avatar', 'id="me-avatar" class="avatar');
+    try { renderStatusBar(); } catch (e) {}
+  }
+  function saveMyStyle(body) {
+    applyMyStyle();
+    api('/api/me/style', { method: 'POST', body })
+      .then((r) => { if (r && r.me) { Object.assign(state.me, r.me); applyMyStyle(); } })
+      .catch(() => toast('⚠️', 'Error', 'Could not save style'));
+  }
+
   function openSettings() {
     const curTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
     const curAccent = localStorage.getItem('tea_accent') || 'blue';
+    const FRAMES = ['', 'gold', 'cyan', 'pink', 'green', 'violet', 'fire', 'rainbow'];
+    const MOODS = ['', '😀', '😎', '😍', '🥳', '😴', '😢', '🔥', '💯', '🎮', '❤️', '🍵', '✨', '😭'];
+    const curFrame = (state.me && state.me.frame) || '';
+    const curMood = (state.me && state.me.mood) || '';
     const overlay = document.createElement('div');
     overlay.className = 'msg-menu settings-menu';
     overlay.innerHTML = `
@@ -4503,6 +4521,18 @@
           <div class="set-label">Accent color</div>
           <div class="swatches">
             ${ACCENTS.map((a) => `<button class="swatch ${curAccent === a.id ? 'on' : ''}" data-accent="${a.id}" style="background:linear-gradient(135deg,${a.c1},${a.c2})" aria-label="${a.id}"></button>`).join('')}
+          </div>
+        </div>
+        <div class="set-section">
+          <div class="set-label">Avatar frame</div>
+          <div class="swatches frame-row">
+            ${FRAMES.map((f) => `<button class="frame-swatch af-${f} ${curFrame === f ? 'on' : ''}" data-frame="${f}" aria-label="${f || 'none'}">${f ? '' : '∅'}</button>`).join('')}
+          </div>
+        </div>
+        <div class="set-section">
+          <div class="set-label">Mood</div>
+          <div class="moods">
+            ${MOODS.map((m) => `<button class="mood-pick ${curMood === m ? 'on' : ''}" data-mood="${m}">${m || '∅'}</button>`).join('')}
           </div>
         </div>
         <div class="set-section">
@@ -4537,7 +4567,23 @@
       const ts = e.target.closest('[data-theme-set]');
       if (ts) { applyTheme(ts.dataset.themeSet); overlay.querySelectorAll('[data-theme-set]').forEach((b) => b.classList.toggle('on', b === ts)); return; }
       const sw = e.target.closest('[data-accent]');
-      if (sw) { applyAccent(sw.dataset.accent); overlay.querySelectorAll('.swatch').forEach((b) => b.classList.toggle('on', b === sw)); return; }
+      if (sw) { applyAccent(sw.dataset.accent); overlay.querySelectorAll('.swatch:not(.frame-swatch)').forEach((b) => b.classList.toggle('on', b === sw)); return; }
+      const fr = e.target.closest('[data-frame]');
+      if (fr) {
+        const id = fr.dataset.frame;
+        if (state.me) state.me.frame = id;
+        overlay.querySelectorAll('[data-frame]').forEach((b) => b.classList.toggle('on', b === fr));
+        saveMyStyle({ frame: id }); haptic();
+        return;
+      }
+      const md = e.target.closest('[data-mood]');
+      if (md) {
+        const m = md.dataset.mood;
+        if (state.me) state.me.mood = m;
+        overlay.querySelectorAll('[data-mood]').forEach((b) => b.classList.toggle('on', b === md));
+        saveMyStyle({ mood: m }); haptic();
+        return;
+      }
       const pv = e.target.closest('[data-priv]');
       if (pv) {
         const key = pv.dataset.priv;

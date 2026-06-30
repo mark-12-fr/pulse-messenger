@@ -517,6 +517,29 @@ def update_me():
     return jsonify(user=user)
 
 
+_FRAMES = {"", "gold", "cyan", "pink", "green", "violet", "fire", "rainbow"}
+
+
+@app.post("/api/me/style")
+@auth_required
+def update_style():
+    data = request.get_json(silent=True) or {}
+    frame = data.get("frame")
+    mood = data.get("mood")
+    if frame is not None:
+        frame = str(frame)[:24]
+        if frame not in _FRAMES:
+            frame = ""
+    if mood is not None:
+        mood = str(mood)[:16]
+    me = db.set_user_style(g.user["id"],
+                           frame=None if frame is None else frame,
+                           mood=None if mood is None else mood)
+    if not me:
+        return jsonify(error="Not found"), 404
+    return jsonify(ok=True, me=me)
+
+
 @app.post("/api/me/password")
 @auth_required
 def change_password():
