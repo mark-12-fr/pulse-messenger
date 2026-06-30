@@ -1199,6 +1199,29 @@ html.resume #auth-screen { display: none; }
 .row:active { transform: scale(.985); }
 .swatch:active { transform: scale(.86); }
 
+/* message-area skeleton — shimmer bubbles while a chat's history loads */
+.sk-msgs { display: flex; flex-direction: column; gap: 13px; padding: 18px 14px 8px; }
+.sk-bubble { height: 40px; border-radius: 16px; }
+.sk-bubble.in { align-self: flex-start; border-bottom-left-radius: 5px; }
+.sk-bubble.out { align-self: flex-end; border-bottom-right-radius: 5px; }
+.sk-bubble.w1 { width: 58%; } .sk-bubble.w2 { width: 44%; } .sk-bubble.w3 { width: 50%; }
+
+/* double-tap a message → a little heart burst (purely visual, no side-effects) */
+.tap-burst { position: fixed; z-index: 60; pointer-events: none; transform: translate(-50%, -50%); }
+.tap-burst i { position: absolute; left: 0; top: 0; font-size: 24px; font-style: normal; will-change: transform, opacity; animation: tapHeart .95s var(--ease) forwards; }
+@keyframes tapHeart {
+  0%   { opacity: 0; transform: translate(0, 0) scale(.3) rotate(0); }
+  18%  { opacity: 1; transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .4)) scale(1.12) rotate(calc(var(--r) * .4)); }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.9) rotate(var(--r)); }
+}
+
+/* the send button gives a little pop when it morphs mic ⇄ send */
+.send-btn.morph-pop { animation: sendPop .28s var(--ease); }
+@keyframes sendPop { 40% { transform: scale(.74) rotate(-10deg); } }
+
+/* smooth colour crossfade while switching light ⇄ dark (only during the switch) */
+html.theme-anim * { transition: background-color .5s var(--ease), color .45s var(--ease), border-color .5s var(--ease), box-shadow .5s var(--ease) !important; }
+
 /* honor reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
