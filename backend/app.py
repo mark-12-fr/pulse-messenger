@@ -144,7 +144,7 @@ def _fetch_and_seed_shorts():
             if resp.status_code != 200:
                 continue
             root = ET.fromstring(resp.content)
-            for entry in list(root.findall("atom:entry", ns))[:1]:
+            for entry in list(root.findall("atom:entry", ns))[:5]:
                 if seeded >= 50:
                     break
                 link_el = entry.find("atom:link", ns)
@@ -162,7 +162,7 @@ def _fetch_and_seed_shorts():
                     continue
                 title_el = entry.find("atom:title", ns)
                 caption = (title_el.text or "")[:200] if title_el is not None else ""
-                embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0"
+                embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0"
                 try:
                     db.ensure_reel_exists(embed, caption)
                     seeded += 1
@@ -173,13 +173,8 @@ def _fetch_and_seed_shorts():
     print(f"[reels] seeded {seeded} videos from {len(_SHORTS_CHANNELS)} channels")
 
 
-# Remove old auto-fetched reels so stale entries don't accumulate
-try:
-    tea_id = db.get_or_create_tea_user()
-    with db.session_scope() as s:
-        s.execute(db.delete(db.Reel).where(db.Reel.user_id == tea_id))
-except Exception:
-    pass
+# Seed fresh cartoon shorts. Existing reels are KEPT (deduped by URL in
+# ensure_reel_exists) so the feed never empties if a fetch returns few.
 _fetch_and_seed_shorts()
 
 # Background thread: delete auto-fetched reels >60s after server starts.
@@ -1096,7 +1091,7 @@ def _parse_video_link(url):
         if m:
             vid = m.group(1)
             if platform == 'youtube':
-                return f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0", platform
+                return f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0", platform
             elif platform == 'tiktok':
                 return f"https://www.tiktok.com/embed/v2/{vid}", platform
     return None, None
