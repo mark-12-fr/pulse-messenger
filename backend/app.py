@@ -133,7 +133,7 @@ def _fetch_and_seed_shorts():
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     seeded = 0
     for cid in _SHORTS_CHANNELS:
-        if seeded >= 50:
+        if seeded >= 250:
             break
         try:
             resp = requests.get(
@@ -144,7 +144,7 @@ def _fetch_and_seed_shorts():
             if resp.status_code != 200:
                 continue
             root = ET.fromstring(resp.content)
-            for entry in list(root.findall("atom:entry", ns))[:5]:
+            for entry in list(root.findall("atom:entry", ns)):
                 if seeded >= 50:
                     break
                 link_el = entry.find("atom:link", ns)
@@ -179,7 +179,25 @@ _fetch_and_seed_shorts()
 
 # Background thread: delete auto-fetched reels >60s after server starts.
 
+MAX_REEL_SECONDS = 80   # keep only short clips ("reels")
+
+
+def _yt_duration(vid):
+    """Best-effort video length in seconds, scraped from the watch page
+    (get_video_info was retired by YouTube). Returns None if unknown."""
+    try:
+        resp = requests.get(
+            f"https://www.youtube.com/watch?v={vid}",
+            timeout=6, headers={"User-Agent": "Mozilla/5.0 (compatible; TeaBot/1.0)"},
+        )
+        dm = re.search(r'"lengthSeconds":"(\d+)"', resp.text) or re.search(r'length_seconds=(\d+)', resp.text)
+        return int(dm.group(1)) if dm else None
+    except Exception:
+        return None
+
+
 def _cleanup_long_reels():
+    """Prune seeded reels that aren't short clips, so the feed stays reel-like."""
     try:
         tid = db.get_or_create_tea_user()
         with db.session_scope() as s:
@@ -189,17 +207,15 @@ def _cleanup_long_reels():
             v = m.group(1) if m else None
             if not v:
                 continue
-            try:
-                resp = requests.get(f"https://www.youtube.com/get_video_info?video_id={v}", timeout=5,
-                                    headers={"User-Agent": "Mozilla/5.0"})
-                dm = re.search(r'length_seconds=(\d+)', resp.text)
-                if dm and int(dm.group(1)) > 61:
+            secs = _yt_duration(v)
+            if secs is not None and secs > MAX_REEL_SECONDS:
+                try:
                     with db.session_scope() as s2:
                         r2 = s2.get(db.Reel, r.id)
                         if r2:
                             s2.delete(r2)
-            except Exception:
-                continue
+                except Exception:
+                    pass
     except Exception:
         pass
 
