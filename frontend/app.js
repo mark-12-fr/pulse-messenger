@@ -4690,7 +4690,7 @@
         <button class="mm-act" data-cancel="1">Close</button>
       </div>`;
     document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('show'));
+    requestAnimationFrame(() => { overlay.classList.add('show'); overlay.querySelector('.settings-sheet').scrollTop = 0; });
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
 
     overlay.addEventListener('click', async (e) => {

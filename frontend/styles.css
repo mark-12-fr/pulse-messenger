@@ -1051,7 +1051,7 @@ input::placeholder, textarea::placeholder {
 }
 
 /* ===== settings sheet ===== */
-.settings-sheet { gap: 0; background: var(--elev); border: 1px solid var(--line); border-radius: 22px; padding: 6px; box-shadow: var(--shadow); }
+.settings-sheet { gap: 0; background: var(--elev); border: 1px solid var(--line); border-radius: 22px; padding: 6px; box-shadow: var(--shadow); max-height: 80vh; overflow-y: auto; }
 .settings-title { font-size: 18px; font-weight: 800; padding: 12px 14px 4px; }
 .set-section { padding: 10px 10px; }
 .set-section.set-list { padding: 6px; }
