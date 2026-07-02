@@ -3468,19 +3468,18 @@
         'stun:stun1.l.google.com:19302',
         'stun:stun2.l.google.com:19302',
         'stun:stun3.l.google.com:19302',
+        'stun:stun4.l.google.com:19302',
       ] },
-      // Free TURN relay so calls connect even behind strict NATs / mobile
-      // carriers where direct peer-to-peer fails. (Overridden by the server's
-      // /api/ice-servers if a dedicated TURN is configured there.)
       { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
       { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
       { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:turn.anyfirewall.com:4555', username: 'anyfirewall', credential: 'anyfirewall' },
+      { urls: 'turn:turnserver.asocialcore.com:3478', username: 'test', credential: 'test' },
     ],
-    // Connect faster: pre-gather a small candidate pool and bundle audio+video
-    // onto a single transport so there's only one ICE negotiation.
-    iceCandidatePoolSize: 4,
+    iceCandidatePoolSize: 6,
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
+    iceTransportPolicy: 'all',
   };
   // Ask the server for its ICE/TURN list (lets a dedicated TURN be configured
   // server-side later — via env vars — without shipping new frontend code).
@@ -3602,12 +3601,22 @@
       if (!activeCall || activeCall.pc !== pc) return;
       const st = pc.connectionState;
       if (st === 'connected') { clearTimeout(activeCall.dropTimer); onCallConnected(); }
-      else if (st === 'failed') hangUp('Connection lost', false);
+      else if (st === 'failed') {
+        if (activeCall && activeCall.status === 'connected') {
+          try { pc.restartIce(); } catch (e) {}
+          clearTimeout(activeCall.dropTimer);
+          activeCall.dropTimer = setTimeout(() => {
+            if (activeCall && activeCall.pc && activeCall.pc.connectionState !== 'connected') hangUp('Connection lost', true);
+          }, 15000);
+        } else {
+          hangUp('Connection lost', false);
+        }
+      }
       else if (st === 'disconnected') {
         clearTimeout(activeCall.dropTimer);
         activeCall.dropTimer = setTimeout(() => {
           if (activeCall && activeCall.pc && activeCall.pc.connectionState !== 'connected') hangUp('Connection lost', true);
-        }, 9000);
+        }, 18000);
       }
     };
     return pc;
