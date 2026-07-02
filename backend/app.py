@@ -1547,17 +1547,26 @@ def on_message_send(payload):
                     mentioned.add(mem_id)
 
     # Push to recipients who aren't actively in the app and haven't muted this chat
-    # (mentions override mute). Content-free: never put the message text in the push.
+    # (mentions override mute).
     sender_name = sender["displayName"] if sender else "Someone"
     title = (conv.get("name") or "Group") if is_group else sender_name
-    bodytext = (f"{sender_name} sent a message") if is_group else "Sent you a message"
+    preview = body or ""
+    if attachment:
+        atype = attachment.get("type", "")
+        aname = attachment.get("name", "")
+        if atype == "image": preview = "📷 Photo"
+        elif atype == "video": preview = "🎥 Video"
+        elif atype == "voice": preview = "🎤 Voice message"
+        elif atype == "location": preview = "📍 Location"
+        elif aname: preview = f"📎 {aname[:40]}"
+        else: preview = "📎 Attachment"
     for mid in db.conversation_member_ids(conv):
         if not mid or mid == uid or is_active(mid):
             continue
         is_mention = mid in mentioned
         if not is_mention and db.is_muted(mid, conv["id"]):
             continue
-        body_for = (f"{sender['displayName']} mentioned you") if is_mention else bodytext
+        body_for = (f"{sender['displayName']} mentioned you") if is_mention else ((f"{sender_name}: {preview}") if is_group else preview)
         socketio.start_background_task(_push_message, mid, title, body_for[:120], conv["id"])
     return {"ok": True, "message": msg}
 

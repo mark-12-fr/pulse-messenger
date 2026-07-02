@@ -1,5 +1,4 @@
-/* Tea service worker — keeps the app fresh and shows push notifications.
-   The push payload never contains the message text (privacy): just "X sent you a message". */
+/* Tea service worker — keeps the app fresh and shows push notifications. */
 const SHELL = 'tea-shell-v3';
 
 self.addEventListener('install', () => self.skipWaiting());
