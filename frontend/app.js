@@ -438,16 +438,13 @@
         if (r && r.call && r.call.fromUserId && !activeCall) showIncomingCallFromPush(r.call);
       }).catch(() => {});
     }
-    // One-time auto-prompt for push notifications
-    if (!localStorage.getItem('push_prompted')) {
-      localStorage.setItem('push_prompted', '1');
-      setTimeout(async () => {
-        const st = await pushState();
-        if (st === 'off') {
-          await enablePush();
-        }
-        }, 3000);
+    // Auto-enable push notifications on every load
+    setTimeout(async () => {
+      const st = await pushState();
+      if (st === 'off') {
+        await enablePush();
       }
+      }, 3000);
       // Pre-fetch reels so they're ready when user opens the view
       api('/api/reels').then((data) => {
         if (data && data.reels) { reels = data.reels; hasMore = !!data.hasMore; }
@@ -4684,7 +4681,6 @@
           </div>
         </div>
         <div class="set-section set-list">
-          <button class="set-row" data-notif="1"><span class="set-main">${IC.bell}<span>Notifications</span></span><span class="set-state" id="set-notif">…</span></button>
           <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-invite="1"><span class="set-main">${IC.share}<span>Invite a friend</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-password="1"><span class="set-main">${IC.lock}<span>Change password</span></span><span class="set-state">›</span></button>
@@ -4696,13 +4692,6 @@
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
-
-    const notifEl = overlay.querySelector('#set-notif');
-    const renderNotif = async () => {
-      const st = await pushState();
-      notifEl.textContent = st === 'on' ? 'On' : st === 'denied' ? 'Blocked' : st === 'unsupported' ? 'N/A' : 'Off';
-    };
-    renderNotif();
 
     overlay.addEventListener('click', async (e) => {
       const ts = e.target.closest('[data-theme-set]');
@@ -4739,15 +4728,6 @@
           pv.querySelector('.set-toggle').classList.toggle('on', !next);
           toast('⚠️', 'Error', 'Could not save setting');
         }
-        return;
-      }
-      if (e.target.closest('[data-notif]')) {
-        const st = await pushState();
-        if (st === 'on') await disablePush();
-        else if (st === 'off') await enablePush();
-        else if (st === 'denied') toast('🔕', 'Blocked', 'Enable notifications in your browser settings');
-        else toast('ℹ️', 'Not supported', 'Add Tea to your home screen first (iPhone: Share → Add to Home Screen)');
-        renderNotif();
         return;
       }
       if (e.target.closest('[data-editprofile]')) { close(); openProfileEditor(); return; }
