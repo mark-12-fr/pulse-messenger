@@ -5597,7 +5597,7 @@
     const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
     const results = overlay.querySelector('#ms-results');
     const input = overlay.querySelector('#ms-q');
-    const renderList = (list, trending) => {
+    const renderList = (list) => {
       results._list = list;
       const rows = list.map((s, i) => `
         <div class="ms-row" data-ms="${i}">
@@ -5605,9 +5605,7 @@
           <span class="ms-meta"><span class="ms-title">${escapeHtml(s.title)}</span><span class="ms-artist">${escapeHtml(s.artist)}</span></span>
           <button class="ms-play" data-ms-play="${i}" aria-label="Preview">${IC.play}</button>
         </div>`).join('');
-      results.innerHTML = list.length
-        ? (trending ? '<div class="ms-head"><span class="ms-fire">🔥</span> Trending now</div>' : '') + rows
-        : '<div class="empty-note">No songs found.</div>';
+      results.innerHTML = list.length ? rows : '<div class="empty-note">No songs found.</div>';
     };
     let recs = null;
     const showRecs = () => {

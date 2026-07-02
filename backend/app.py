@@ -1051,11 +1051,11 @@ def _get_trending():
     if now - _TRENDING_CACHE["time"] < 3600 and _TRENDING_CACHE["results"]:
         return _TRENDING_CACHE["results"]
     seen, out = set(), []
-    genres = ["pop", "hip hop", "rnb", "rock", "k pop", "opm", "indie", "latin"]
-    terms = random.sample(_MUSIC_SEEDS, 3) + random.sample(genres, 2)
+    genres = ["pop", "hip hop", "rnb", "rock", "k pop", "opm", "indie", "latin", "reggae", "jazz", "electronic", "folk"]
+    terms = random.sample(_MUSIC_SEEDS, 4) + random.sample(genres, 3)
     for term in terms:
         try:
-            for s in _itunes_songs(term, 6):
+            for s in _itunes_songs(term, 10):
                 if s["url"] in seen:
                     continue
                 seen.add(s["url"])
@@ -1063,7 +1063,7 @@ def _get_trending():
         except Exception:
             continue
     random.shuffle(out)
-    _TRENDING_CACHE["results"] = out[:24]
+    _TRENDING_CACHE["results"] = out[:50]
     _TRENDING_CACHE["time"] = now
     return _TRENDING_CACHE["results"]
 
@@ -1097,7 +1097,7 @@ def music_search():
     if not q:
         return jsonify(results=_get_trending(), trending=True)
     try:
-        return jsonify(results=_itunes_songs(q, 18))
+        return jsonify(results=_itunes_songs(q, 30))
     except Exception:
         return jsonify(results=[])
 
