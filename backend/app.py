@@ -43,6 +43,7 @@ import json
 import re
 import os
 import time
+import random
 import secrets
 import threading
 import functools
@@ -1043,6 +1044,29 @@ _MUSIC_SEEDS = [
     "Sarah Geronimo", "December Avenue", "Cup of Joe", "Bini",
 ]
 
+_TRENDING_CACHE = {"time": 0, "results": []}
+
+def _get_trending():
+    now = time.time()
+    if now - _TRENDING_CACHE["time"] < 3600 and _TRENDING_CACHE["results"]:
+        return _TRENDING_CACHE["results"]
+    seen, out = set(), []
+    genres = ["pop", "hip hop", "rnb", "rock", "k pop", "opm", "indie", "latin"]
+    terms = random.sample(_MUSIC_SEEDS, 3) + random.sample(genres, 2)
+    for term in terms:
+        try:
+            for s in _itunes_songs(term, 6):
+                if s["url"] in seen:
+                    continue
+                seen.add(s["url"])
+                out.append(s)
+        except Exception:
+            continue
+    random.shuffle(out)
+    _TRENDING_CACHE["results"] = out[:24]
+    _TRENDING_CACHE["time"] = now
+    return _TRENDING_CACHE["results"]
+
 
 def _itunes_songs(term, limit):
     r = requests.get(
@@ -1071,18 +1095,7 @@ def _itunes_songs(term, limit):
 def music_search():
     q = str(request.args.get("q", "")).strip()
     if not q:
-        seen, out = set(), []
-        for term in random.sample(_MUSIC_SEEDS, 4):
-            try:
-                for s in _itunes_songs(term, 5):
-                    if s["url"] in seen:
-                        continue
-                    seen.add(s["url"])
-                    out.append(s)
-            except Exception:
-                continue
-        random.shuffle(out)
-        return jsonify(results=out[:18])
+        return jsonify(results=_get_trending(), trending=True)
     try:
         return jsonify(results=_itunes_songs(q, 18))
     except Exception:

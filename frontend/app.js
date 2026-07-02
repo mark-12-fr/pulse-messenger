@@ -5492,7 +5492,7 @@
       <div class="modal-card note-view-card">
         <div class="nv-head">${avatarHtml(group.user, { cls: 'nv-av' })}<div class="nv-who"><div class="nv-name">${escapeHtml(friendName(group.user) || group.user.displayName || '')}</div><div class="nv-time">${timeAgo(n.createdAt)}</div></div></div>
         ${(n.text || !n.music) ? `<div class="nv-bubble">${n.music ? EQ : ''}${escapeHtml(n.text || '')}</div>` : ''}
-        ${n.music ? `<button class="nv-song" data-nv-play>${n.music.art ? `<img src="${escapeHtml(n.music.art)}" alt="">` : '<span class="nv-song-art">🎵</span>'}<span class="nv-song-meta"><b>${escapeHtml(n.music.title)}</b><span>${escapeHtml(n.music.artist)}</span></span><span class="nv-play-ic">${IC.play}</span></button>` : ''}
+        ${n.music ? `<button class="nv-song" data-nv-play><div class="nv-song-art-wrap">${n.music.art ? `<img src="${escapeHtml(n.music.art)}" alt="">` : '<span class="nv-song-art">🎵</span>'}</div><span class="nv-song-meta"><b>${escapeHtml(n.music.title)}</b><span>${escapeHtml(n.music.artist)}</span></span><span class="nv-play-ic">${IC.play}</span></button>` : ''}
         <div class="modal-actions">
           <button class="btn-soft" data-cancel="1">Close</button>
           ${mine ? `<button class="btn-primary" data-nv-edit>Edit note</button>` : `<button class="btn-primary" data-nv-msg>Message</button>`}
@@ -5572,8 +5572,8 @@
     overlay.innerHTML = `
       <div class="mm-sheet">
         <div class="settings-title">Add music</div>
-        <div class="ms-search"><input id="ms-q" placeholder="Search songs…" autocomplete="off"></div>
-        <div class="ms-results" id="ms-results"><div class="empty-note">Loading suggestions…</div></div>
+        <div class="ms-search"><input id="ms-q" placeholder="Search songs or artists…" autocomplete="off"></div>
+        <div class="ms-results" id="ms-results"><div class="ms-loading"><span></span><span></span><span></span></div></div>
         <div class="mm-actions"><button class="mm-act" data-cancel="1">Cancel</button></div>
       </div>`;
     document.body.appendChild(overlay);
@@ -5581,22 +5581,22 @@
     const close = () => { stopNotePreview(); overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
     const results = overlay.querySelector('#ms-results');
     const input = overlay.querySelector('#ms-q');
-    const renderList = (list, suggested) => {
+    const renderList = (list, trending) => {
       results._list = list;
       const rows = list.map((s, i) => `
         <div class="ms-row" data-ms="${i}">
-          ${s.art ? `<img class="ms-art" src="${escapeHtml(s.art)}" alt="">` : '<span class="ms-art">🎵</span>'}
+          ${s.art ? `<img class="ms-art" src="${escapeHtml(s.art)}" alt="" loading="lazy">` : '<span class="ms-art">🎵</span>'}
           <span class="ms-meta"><span class="ms-title">${escapeHtml(s.title)}</span><span class="ms-artist">${escapeHtml(s.artist)}</span></span>
           <button class="ms-play" data-ms-play="${i}" aria-label="Preview">${IC.play}</button>
         </div>`).join('');
       results.innerHTML = list.length
-        ? (suggested ? '<div class="ms-head">Suggested</div>' : '') + rows
+        ? (trending ? '<div class="ms-head"><span class="ms-fire">🔥</span> Trending now</div>' : '') + rows
         : '<div class="empty-note">No songs found.</div>';
     };
     let recs = null;
     const showRecs = () => {
       if (recs && recs.length) renderList(recs, true);
-      else results.innerHTML = '<div class="empty-note">Search for a song 🎵</div>';
+      else results.innerHTML = '<div class="ms-loading"><span></span><span></span><span></span></div>';
     };
     (async () => {
       try {
@@ -5611,7 +5611,7 @@
       const q = input.value.trim();
       if (!q) { showRecs(); return; }
       timer = setTimeout(async () => {
-        results.innerHTML = `<div class="empty-note">Searching…</div>`;
+        results.innerHTML = `<div class="ms-loading"><span></span><span></span><span></span></div>`;
         try {
           const d = await api('/api/music/search?q=' + encodeURIComponent(q));
           renderList(d.results || [], false);
@@ -5667,8 +5667,8 @@
     };
     const renderMusic = () => {
       musicRow.innerHTML = selectedMusic
-        ? `<div class="note-song">
-             ${selectedMusic.art ? `<img class="note-song-art" src="${escapeHtml(selectedMusic.art)}" alt="">` : '<span class="note-song-art">🎵</span>'}
+        ? `<div class="note-song playing">
+             <div class="note-song-art-wrap">${selectedMusic.art ? `<img class="note-song-art" src="${escapeHtml(selectedMusic.art)}" alt="">` : '<span class="note-song-art">🎵</span>'}<span class="note-song-art-ring"></span></div>
              <div class="note-song-meta"><div class="note-song-title">${escapeHtml(selectedMusic.title)}</div><div class="note-song-artist">${escapeHtml(selectedMusic.artist)}</div></div>
              <button class="note-song-play" id="note-song-play" aria-label="Preview">${IC.play}</button>
              <button class="note-song-x" id="note-song-x" aria-label="Remove song">✕</button>
