@@ -1437,13 +1437,17 @@ html.theme-anim * { transition: background-color .5s var(--ease), color .45s var
 .st-note-music .eq i { width: 2px; }
 @media (prefers-reduced-motion: reduce) { .eq i { animation: none; height: 8px; } }
 
-/* chat effects (confetti / hearts / balloons on fun messages) */
+/* chat effects (confetti / hearts / balloons / fireworks / sparkles on fun messages) */
 .fx-layer { position: fixed; inset: 0; z-index: 385; pointer-events: none; overflow: hidden; }
 .fx { position: absolute; top: -12%; will-change: transform, opacity; opacity: 0; }
 .fx-fall { animation-name: fxFall; animation-timing-function: ease-in; animation-fill-mode: forwards; }
 .fx-rise { top: auto; bottom: -12%; animation-name: fxRise; animation-timing-function: ease-out; animation-fill-mode: forwards; }
+.fx-drift { animation-name: fxDrift; animation-timing-function: ease-in-out; animation-fill-mode: forwards; }
+.fx-spin { animation-name: fxSpin; animation-timing-function: cubic-bezier(.25, .46, .45, .94); animation-fill-mode: forwards; }
 @keyframes fxFall { 0% { transform: translateY(0) rotate(0); opacity: 0; } 10% { opacity: 1; } 100% { transform: translateY(122vh) rotate(var(--rot, 40deg)); opacity: 1; } }
 @keyframes fxRise { 0% { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-122vh) scale(1.1) rotate(var(--rot, 30deg)); opacity: 0; } }
+@keyframes fxDrift { 0% { transform: translateY(0) translateX(0) scale(.5); opacity: 0; } 15% { opacity: .9; } 50% { transform: translateY(-55vh) translateX(calc(var(--dx, 60) * 1px)) scale(1.1); } 100% { transform: translateY(-110vh) translateX(calc(var(--dx, 60) * 2px)) scale(.7); opacity: 0; } }
+@keyframes fxSpin { 0% { transform: translateY(0) rotate(0) scale(.3); opacity: 0; } 12% { opacity: 1; } 50% { transform: translateY(-50vh) rotate(180deg) scale(1.1); } 100% { transform: translateY(-120vh) rotate(360deg) scale(.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .fx-layer { display: none; } }
 
 /* note composer (professional) */

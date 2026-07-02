@@ -1286,36 +1286,52 @@
   function detectEffect(text) {
     if (!text) return null;
     const t = String(text).toLowerCase();
-    if (/🎂|🥳|🎉|🎊|happy\s*birthday|congrats|congratulation/.test(t)) return 'confetti';
+    if (/🎂|🥳|🎉|🎊|happy\s*birthday|happy\s*bday|happy\s*birthday\s*🎂|congrats|congratulation|congratulations|\bparty\b|\bletsgo\b|\bpablow\b|\bsalim\b|\bhbd\b/.test(t)) return 'confetti';
     if (/🎈/.test(t)) return 'balloons';
-    if (/❤️|❤|💖|💕|💗|💓|💞|🥰|😍|i\s*love\s*you|love\s*you|\bily\b/.test(t)) return 'hearts';
+    if (/❤️|❤|💖|💕|💗|💓|💞|🥰|😍|i\s*love\s*you|love\s*you|\bily\b|\bilysm\b|\bmahal\b|\bha?lg?\b|\bgugma\b|\byanna\b|\blabyu\b|\blabyap\b/.test(t)) return 'hearts';
+    if (/🔥|\bangas\b|\bang galing\b|\bgrabe\b|\bsuper\b|\blegend\b|\biba\b|\bpanalo\b/.test(t)) return 'fire';
+    if (/✨|⭐|\bamazing\b|\bgaling\b|\bproud\b|\bsipag\b|\bsipagan\b|\bbright\b/.test(t)) return 'sparkles';
+    if (/🎆|🎇|💥|\bfirework\b|\bnew\s*year\b/.test(t)) return 'fireworks';
+    if (/🫧|\bbubble\b|\bhaha\b|\bhihi\b|\blol\b|\blmao\b|\bhuehue\b|\bwkwk\b/.test(t)) return 'bubbles';
+    if (/🌸|🌺|🌷|🌻|🌹|\bflower\b|\bpretty\b|\bmaganda\b|\bbird\b|\bprity\b|\bchz\b|\bganda\b|\bgorgeous\b|\bchaka\b/.test(t)) return 'flowers';
+    if (/💰|💸|💵|💎|\bmoney\b|\baman\b|\byaman\b|\brich\b|\bsalary\b|\bsahod\b|\bsweldo\b|\bpera\b/.test(t)) return 'money';
+    if (/🌟|\bstar\b|\bsana\b|\bwow\b|\bosh\b|\bhala\b|\bsalamat\b|\bthank\s*you\b/.test(t)) return 'stars';
     return null;
   }
   let _fxBusy = false;
   function maybeChatEffect(text) {
     const fx = detectEffect(text);
     if (fx) playChatEffect(fx);
+    else if (text && Math.random() < 0.04) playChatEffect(['sparkles', 'stars', 'bubbles'][Math.floor(Math.random() * 3)]);
   }
   function playChatEffect(type) {
     if (_fxBusy) return;
     _fxBusy = true;
     const sets = {
-      confetti: ['🎉', '🎊', '✨', '⭐', '🎈'],
-      hearts: ['❤️', '💖', '💕', '💗', '🥰'],
-      balloons: ['🎈', '🎈', '🎉', '✨'],
+      confetti: ['🎉', '🎊', '✨', '⭐', '🎈', '🥳', '🎶'],
+      hearts: ['❤️', '💖', '💕', '💗', '🥰', '💓', '💞', '🩷'],
+      balloons: ['🎈', '🎈', '🎉', '✨', '🎊', '💫'],
+      fire: ['🔥', '🔥', '🔥', '❤️‍🔥', '💥', '⭐'],
+      sparkles: ['✨', '✨', '⭐', '🌟', '💫', '⚡', '🌸'],
+      fireworks: ['🎆', '🎇', '💥', '✨', '⭐', '🌟', '🎉'],
+      bubbles: ['🫧', '🫧', '✨', '💨', '🫧', '🫧', '💫'],
+      flowers: ['🌸', '🌺', '🌷', '🌻', '🌹', '💐', '🌼'],
+      money: ['💰', '💸', '💵', '💎', '🪙', '✨', '💫'],
+      stars: ['🌟', '⭐', '✨', '💫', '🌈', '🌟', '⭐'],
     };
     const emojis = sets[type] || sets.confetti;
-    const rise = type !== 'confetti';
+    const rise = type === 'balloons' || type === 'bubbles' || type === 'hearts';
     const layer = document.createElement('div');
     layer.className = 'fx-layer';
+    const count = type === 'fireworks' ? 18 : 24;
     let html = '';
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < count; i++) {
       const em = emojis[Math.floor(Math.random() * emojis.length)];
       const left = Math.random() * 100;
-      const dur = 2.6 + Math.random() * 1.8;
-      const delay = Math.random() * 0.5;
-      const size = 18 + Math.random() * 22;
-      const rot = Math.floor(Math.random() * 140 - 70);
+      const dur = 2.6 + Math.random() * 2.2;
+      const delay = Math.random() * 0.6;
+      const size = 16 + Math.random() * 26;
+      const rot = Math.floor(Math.random() * 160 - 80);
       html += `<span class="fx ${rise ? 'fx-rise' : 'fx-fall'}" style="left:${left}%;font-size:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;--rot:${rot}deg">${em}</span>`;
     }
     layer.innerHTML = html;
