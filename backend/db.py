@@ -334,6 +334,7 @@ def _iso(dt):
 def public_user(u):
     if not u:
         return None
+    priv = json.loads(u.privacy) if u.privacy else {}
     return {
         "id": u.id,
         "username": u.username,
@@ -343,6 +344,8 @@ def public_user(u):
         "frame": getattr(u, "avatar_frame", None),
         "mood": getattr(u, "mood", None),
         "lastSeen": _iso(u.last_seen),
+        "hideLastSeen": priv.get("lastSeen", False),
+        "hideReadReceipts": priv.get("readReceipts", False),
     }
 
 

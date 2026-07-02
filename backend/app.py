@@ -963,8 +963,9 @@ def conversation_media(cid):
 def me_privacy():
     data = request.get_json(silent=True) or {}
     for key, val in data.items():
-        if key in ("lastSeen", "readReceipts", "online"):
-            db.set_user_privacy(g.user["id"], key, bool(val))
+        store_key = {"hideLastSeen": "lastSeen", "hideReadReceipts": "readReceipts"}.get(key, key)
+        if store_key in ("lastSeen", "readReceipts", "online"):
+            db.set_user_privacy(g.user["id"], store_key, bool(val))
     me = db.get_user_by_id(g.user["id"])
     return jsonify(me=me)
 
