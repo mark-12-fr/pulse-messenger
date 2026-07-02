@@ -1222,6 +1222,149 @@ html.resume #auth-screen { display: none; }
 /* smooth colour crossfade while switching light ⇄ dark (only during the switch) */
 html.theme-anim * { transition: background-color .5s var(--ease), color .45s var(--ease), border-color .5s var(--ease), box-shadow .5s var(--ease) !important; }
 
+/* ===================== super-smooth pack ✨ ===================== */
+/* sidebar rows cascade in on the FIRST paint only (.list-anim is one-shot) */
+#tab-chats.list-anim .row { animation: rowIn .34s var(--ease) both; animation-delay: calc(var(--i, 0) * 30ms); }
+@keyframes rowIn { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+
+/* the last few messages cascade up when a chat opens */
+.msg.cascade { animation: msgIn .32s cubic-bezier(.22, 1, .3, 1) both; animation-delay: calc(var(--i, 0) * 28ms); }
+
+/* photos & videos in fresh messages fade-scale in */
+.msg.is-new .bubble.media img, .msg.is-new .bubble.media video { animation: mediaIn .5s var(--ease) both; }
+@keyframes mediaIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+
+/* unread badge pops when its count changes */
+.row-badge.bump { animation: badgePop .32s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes badgePop { 0% { transform: scale(.4); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+
+/* springier typing dots */
+.typing-dots i { animation: dotSpring 1.1s infinite cubic-bezier(.34, 1.56, .64, 1) !important; }
+@keyframes dotSpring { 0%, 60%, 100% { transform: translateY(0) scale(1); opacity: .5; } 30% { transform: translateY(-5px) scale(1.28); opacity: 1; } }
+
+/* reaction picker emojis pop in one after another */
+.msg-menu.show .mm-react { animation: pickerPop .3s cubic-bezier(.34, 1.56, .64, 1) both; animation-delay: calc(var(--i, 0) * 24ms); }
+@keyframes pickerPop { from { opacity: 0; transform: scale(.3) translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* sheets & modals land with a gentle spring overshoot */
+:root { --spring: cubic-bezier(.34, 1.3, .44, 1); }
+.mm-sheet { transition: transform .38s var(--spring) !important; }
+.modal-card { transition: transform .34s var(--spring) !important; }
+.pm-card { transition: transform .38s var(--spring) !important; }
+
+/* bubbles squish under your finger during a long-press */
+.msg .bubble:active { transform: scale(.965); }
+.msg.in .bubble:active { transform-origin: bottom left; }
+.msg.out .bubble:active { transform-origin: bottom right; }
+
+/* wallpaper crossfade when it actually changes */
+.messages.wp-fade { animation: wpFade .4s var(--ease); }
+@keyframes wpFade { from { opacity: .35; } to { opacity: 1; } }
+
+/* pinned banner slides down into place */
+.pin-bar.pin-in { animation: pinSlide .3s var(--ease); }
+@keyframes pinSlide { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+/* chat header name crossfades between chats */
+.chat-peer-name.name-swap { animation: nameSwap .28s var(--ease); }
+@keyframes nameSwap { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* empty-state notes float up */
+.empty-note { animation: fadeUp .35s var(--ease) both; }
+
+/* scroll-to-bottom unread counter bumps on change */
+.sb-count.bump { animation: sbBump .3s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes sbBump { 0% { transform: scale(.5); } 55% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
+/* avatars give a tiny squish when tapped */
+.row:active .avatar { transform: scale(.9); }
+.me:active .avatar { transform: scale(.9) rotate(-4deg); }
+
+/* ===================== streak 🔥 · birthday 🎂 badges ===================== */
+.streak-badge {
+  display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 800;
+  color: #ff8a00; animation: flameFlicker 1.6s ease-in-out infinite;
+}
+@keyframes flameFlicker { 0%, 100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.12); filter: brightness(1.25); } }
+.bday-badge { display: inline-block; margin-left: 6px; font-size: 13px; animation: floatY 2.4s ease-in-out infinite; }
+#peer-badges { margin-left: 7px; }
+#peer-badges .streak-badge, #peer-badges .bday-badge { margin-left: 4px; vertical-align: 1px; }
+
+/* birthday picker in Settings */
+.bday-row { display: flex; gap: 8px; align-items: center; }
+.bday-sel {
+  flex: 1; padding: 9px 10px; border-radius: 11px; border: 1px solid var(--line);
+  background: var(--field); color: var(--text); font-family: inherit; font-size: 14px;
+}
+.set-hint { font-weight: 500; font-size: 11px; color: var(--text-faint); margin-left: 6px; }
+
+/* ===================== archived section 📦 ===================== */
+.arch-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 12px 16px; margin-top: 6px; border: none; background: none;
+  color: var(--text-soft); font-size: 13.5px; font-weight: 650; text-align: left;
+  border-top: 1px solid var(--line); transition: background .16s var(--ease);
+}
+.arch-toggle:hover { background: var(--hover); }
+.arch-n { background: var(--field); border-radius: 9px; padding: 1px 8px; font-size: 12px; }
+.arch-chev { margin-left: auto; transition: transform .2s var(--ease); }
+.arch-toggle.open .arch-chev { transform: rotate(90deg); }
+
+/* ===================== starred messages ⭐ ===================== */
+.m-star { margin-right: 4px; font-size: 10px; }
+.star-row {
+  display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left;
+  padding: 11px 14px; border: none; border-radius: 12px; background: none;
+  color: var(--text); transition: background .15s var(--ease), transform .12s var(--ease);
+}
+.star-row:hover { background: var(--hover); }
+.star-row:active { transform: scale(.98); }
+.star-prev { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.star-meta { font-size: 11.5px; color: var(--text-faint); }
+
+/* ===================== Tic-Tac-Toe 🎮 ===================== */
+.bubble.game { min-width: 210px; }
+.ttt-head { font-weight: 800; font-size: 13.5px; margin-bottom: 5px; }
+.ttt-players { display: flex; gap: 7px; align-items: center; font-size: 12px; color: var(--text-soft); margin-bottom: 8px; flex-wrap: wrap; }
+.ttt-x { color: #19d3ff; font-weight: 700; }
+.ttt-o { color: #ff8a4d; font-weight: 700; }
+.ttt-vs { opacity: .6; font-size: 11px; }
+.ttt-grid { display: grid; grid-template-columns: repeat(3, 56px); gap: 6px; justify-content: center; margin: 4px 0 8px; }
+.ttt-cell {
+  width: 56px; height: 56px; border-radius: 13px; border: none;
+  background: rgba(127, 127, 127, .16); color: var(--text);
+  font-size: 26px; font-weight: 800; line-height: 1; display: flex; align-items: center; justify-content: center;
+  transition: transform .14s var(--ease), background .16s var(--ease);
+}
+.ttt-cell:not(:disabled):hover { background: rgba(127, 127, 127, .28); }
+.ttt-cell:not(:disabled):active { transform: scale(.88); }
+.ttt-cell:disabled { cursor: default; }
+.ttt-cell.x { color: #19d3ff; }
+.ttt-cell.o { color: #ff8a4d; }
+.ttt-cell.filled { animation: tttPop .3s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes tttPop { 0% { transform: scale(.3) rotate(-16deg); } 100% { transform: scale(1) rotate(0); } }
+.ttt-cell.win { background: rgba(49, 199, 90, .3); animation: tttWin .7s var(--ease) 2; }
+@keyframes tttWin { 50% { transform: scale(1.12); filter: brightness(1.35); } }
+.ttt-status { font-size: 12.5px; font-weight: 650; color: var(--text-soft); }
+.ttt-again {
+  margin-top: 8px; padding: 8px 14px; width: 100%; border: none; border-radius: 11px;
+  background: var(--accent-grad, linear-gradient(135deg, #0a7cff, #6c46ff)); color: #fff;
+  font-weight: 700; font-size: 13px; transition: transform .14s var(--ease), filter .16s var(--ease);
+}
+.ttt-again:hover { filter: brightness(1.08); }
+.ttt-again:active { transform: scale(.95); }
+
+/* ===================== reels: tap overlay + sound badge ===================== */
+.reel-embed { position: relative; }
+.reel-tap { position: absolute; inset: 0; z-index: 1; }
+.reel-sound {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(.6);
+  z-index: 3; font-size: 44px; opacity: 0; pointer-events: none;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, .55);
+  transition: opacity .25s var(--ease), transform .25s var(--ease);
+}
+.reel-sound.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
 /* honor reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

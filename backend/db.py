@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
-    create_engine, select, or_, and_, func, delete, text,
+    create_engine, select, or_, and_, func, delete, text, update,
     Integer, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, Index,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, mapped_column, aliased
@@ -81,6 +81,7 @@ class User(Base):
     privacy = mapped_column(Text, nullable=True)
     avatar_frame = mapped_column(String(24), nullable=True)
     mood = mapped_column(String(16), nullable=True)
+    birthday = mapped_column(String(5), nullable=True)  # "MM-DD" — year is private
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     last_seen = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -107,6 +108,12 @@ class Conversation(Base):
     owner_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     description = mapped_column(Text, nullable=True)
     pinned_message_id = mapped_column(Integer, nullable=True)
+    # Chat streak 🔥 (1-to-1 only): a Philippine-time day counts when BOTH sides
+    # send a message; consecutive counted days grow the streak.
+    streak_count = mapped_column(Integer, nullable=True, default=0)
+    streak_date = mapped_column(String(10), nullable=True)     # last counted day
+    streak_a_date = mapped_column(String(10), nullable=True)   # user_a's last message day
+    streak_b_date = mapped_column(String(10), nullable=True)   # user_b's last message day
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("user_a", "user_b", name="uq_conv_pair"),)
 
@@ -189,7 +196,15 @@ class ConversationPref(Base):
     conversation_id = mapped_column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     pinned = mapped_column(Boolean, nullable=False, default=False)
     muted = mapped_column(Boolean, nullable=False, default=False)
+    archived = mapped_column(Boolean, nullable=True, default=False)
     __table_args__ = (UniqueConstraint("user_id", "conversation_id", name="uq_conv_pref"),)
+
+
+class StarredMessage(Base):
+    __tablename__ = "starred_messages"
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    message_id = mapped_column(Integer, ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True)
+    created_at = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class Block(Base):
@@ -232,6 +247,16 @@ class ReelComment(Base):
     user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     text = mapped_column(Text, nullable=False)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ReelView(Base):
+    __tablename__ = "reel_views"
+    id = mapped_column(Integer, primary_key=True)
+    reel_id = mapped_column(Integer, ForeignKey("reels.id", ondelete="CASCADE"), nullable=False)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    viewed_at = mapped_column(DateTime(timezone=True), default=now_utc)
+    # UNIQUE so a user is counted at most once per reel, even under a race
+    __table_args__ = (UniqueConstraint("reel_id", "user_id", name="uq_reel_view_pair"),)
 
 
 class Story(Base):
@@ -309,6 +334,30 @@ def init_db():
     _migrate_column("conversations", "description", "TEXT")
     _migrate_column("messages", "consumed", "BOOLEAN DEFAULT FALSE")
     _migrate_column("notes", "expires_at", "TIMESTAMPTZ")
+    _migrate_column("users", "birthday", "VARCHAR(5)")
+    _migrate_column("conversation_prefs", "archived", "BOOLEAN DEFAULT FALSE")
+    _migrate_column("conversations", "streak_count", "INTEGER DEFAULT 0")
+    _migrate_column("conversations", "streak_date", "VARCHAR(10)")
+    _migrate_column("conversations", "streak_a_date", "VARCHAR(10)")
+    _migrate_column("conversations", "streak_b_date", "VARCHAR(10)")
+    # reel_views predates this feature; enforce one-view-per-user (dedupe first,
+    # since a UNIQUE index can't be created while duplicate rows exist)
+    _migrate_sql(
+        "DELETE FROM reel_views a USING reel_views b "
+        "WHERE a.reel_id = b.reel_id AND a.user_id = b.user_id AND a.id > b.id"
+    )
+    _migrate_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_reel_view_pair ON reel_views (reel_id, user_id)")
+
+
+def _migrate_sql(sql):
+    """Run a one-off idempotent migration statement; ignore if it can't apply
+    (e.g. SQLite syntax differences in dev — the model constraints cover fresh DBs)."""
+    try:
+        with engine.connect() as c:
+            c.execute(text(sql))
+            c.commit()
+    except Exception:
+        pass
 
 
 def _migrate_column(table, column, coldef):
@@ -343,6 +392,7 @@ def public_user(u):
         "avatarUrl": u.avatar_url,
         "frame": getattr(u, "avatar_frame", None),
         "mood": getattr(u, "mood", None),
+        "birthday": getattr(u, "birthday", None),
         "lastSeen": _iso(u.last_seen),
         "hideLastSeen": priv.get("lastSeen", False),
         "hideReadReceipts": priv.get("readReceipts", False),
@@ -358,6 +408,15 @@ def set_user_style(user_id, frame=None, mood=None):
             u.avatar_frame = (frame or None)
         if mood is not None:
             u.mood = (mood or None)
+        return public_user(u)
+
+
+def set_user_birthday(user_id, birthday):
+    with session_scope() as s:
+        u = s.get(User, user_id)
+        if not u:
+            return None
+        u.birthday = (birthday or None)
         return public_user(u)
 
 
@@ -386,6 +445,14 @@ def public_message(m):
                 d["poll"] = parsed
         except (json.JSONDecodeError, TypeError):
             pass
+    if m.attachment_type == "game" and m.body:
+        try:
+            parsed = json.loads(m.body)
+            if isinstance(parsed, dict) and "board" in parsed:
+                d["body"] = "🎮 Tic-Tac-Toe"
+                d["game"] = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
     return d
 
 
@@ -400,6 +467,8 @@ def _msg_preview(m):
         return "🎤 Voice message"
     if m.attachment_type == "file":
         return "📎 " + (m.attachment_name or "File")
+    if m.attachment_type == "game":
+        return "🎮 Tic-Tac-Toe"
     return (m.body or "")[:80]
 
 
@@ -1128,9 +1197,9 @@ def list_conversations(me_id):
         if not conv_ids:
             return []
 
-        # pin / mute prefs (1 query)
+        # pin / mute / archive prefs (1 query)
         prefs = {
-            p.conversation_id: {"pinned": bool(p.pinned), "muted": bool(p.muted)}
+            p.conversation_id: {"pinned": bool(p.pinned), "muted": bool(p.muted), "archived": bool(p.archived)}
             for p in s.execute(
                 select(ConversationPref).where(ConversationPref.user_id == me_id)
             ).scalars().all()
@@ -1188,12 +1257,14 @@ def list_conversations(me_id):
                 "unread": unread_by_conv.get(cid, 0),
                 "pinned": bool(pref.get("pinned")),
                 "muted": bool(pref.get("muted")),
+                "archived": bool(pref.get("archived")),
                 "_sort": (last["createdAt"] if last else conv.get("created_at")) or "",
             }
             if is_group:
                 entry["group"] = public_conversation_meta(conv, me_id)
             else:
                 entry["friend"] = users_by_id.get(conversation_partner_id(conv, me_id))
+                entry["streak"] = _streak_effective(c)
             result.append(entry)
 
     # pinned conversations float to the top, then most-recent first
@@ -1219,16 +1290,167 @@ def _get_or_make_pref(s, user_id, conversation_id):
     return p
 
 
-def set_conversation_pref(user_id, conversation_id, pinned=None, muted=None):
-    """Update pin/mute for one user's view of a conversation. Returns {pinned, muted}."""
+def set_conversation_pref(user_id, conversation_id, pinned=None, muted=None, archived=None):
+    """Update pin/mute/archive for one user's view of a conversation."""
     with session_scope() as s:
         p = _get_or_make_pref(s, user_id, conversation_id)
         if pinned is not None:
             p.pinned = bool(pinned)
         if muted is not None:
             p.muted = bool(muted)
+        if archived is not None:
+            p.archived = bool(archived)
         s.flush()
-        return {"pinned": bool(p.pinned), "muted": bool(p.muted)}
+        return {"pinned": bool(p.pinned), "muted": bool(p.muted), "archived": bool(p.archived)}
+
+
+def clear_conversation_archived(conversation_id):
+    """A new message un-archives the chat for every member (like Messenger)."""
+    with session_scope() as s:
+        s.execute(
+            update(ConversationPref)
+            .where(ConversationPref.conversation_id == conversation_id,
+                   ConversationPref.archived == True)  # noqa: E712
+            .values(archived=False)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Chat streaks 🔥 — days are Philippine time (UTC+8), the app's home audience,
+# so the streak flips over at local midnight rather than 8 AM.
+# ---------------------------------------------------------------------------
+def _ph_day(offset_days=0):
+    return (datetime.now(timezone.utc) + timedelta(hours=8) - timedelta(days=offset_days)).strftime("%Y-%m-%d")
+
+
+def _streak_effective(c):
+    """The streak to display: the stored count while it's alive (last counted
+    day is today or yesterday), otherwise 0."""
+    count = getattr(c, "streak_count", None) or 0
+    day = getattr(c, "streak_date", None)
+    if not count or not day:
+        return 0
+    return int(count) if day >= _ph_day(1) else 0
+
+
+def bump_streak(conversation_id, sender_id):
+    """Record a message toward the 1-to-1 chat streak. A day counts when BOTH
+    sides send at least one message; consecutive counted days grow the streak,
+    a missed day resets it. Returns the display streak, or None for groups."""
+    with session_scope() as s:
+        c = s.get(Conversation, conversation_id)
+        if not c or c.is_group:
+            return None
+        today, yesterday = _ph_day(0), _ph_day(1)
+        if sender_id == c.user_a:
+            c.streak_a_date = today
+        elif sender_id == c.user_b:
+            c.streak_b_date = today
+        else:
+            return None
+        if (c.streak_date or "") < yesterday:
+            c.streak_count = 0  # missed a day — streak broken
+        if c.streak_a_date == today and c.streak_b_date == today and c.streak_date != today:
+            c.streak_count = ((c.streak_count or 0) + 1) if c.streak_date == yesterday else 1
+            c.streak_date = today
+        return _streak_effective(c)
+
+
+# ---------------------------------------------------------------------------
+# Starred messages ⭐ (per-user bookmarks)
+# ---------------------------------------------------------------------------
+def toggle_star(user_id, message_id):
+    """Star/unstar a message for one user. Returns True (now starred),
+    False (now unstarred), or None if the message can't be starred."""
+    with session_scope() as s:
+        row = s.get(StarredMessage, (user_id, message_id))
+        if row:
+            s.delete(row)
+            return False
+        m = s.get(Message, message_id)
+        if not m or m.unsent:
+            return None
+        s.add(StarredMessage(user_id=user_id, message_id=message_id, created_at=now_utc()))
+        return True
+
+
+def starred_ids(user_id):
+    with session_scope() as s:
+        return [
+            int(mid) for mid in s.execute(
+                select(StarredMessage.message_id).where(StarredMessage.user_id == user_id)
+            ).scalars().all()
+        ]
+
+
+def list_starred(user_id, limit=200):
+    with session_scope() as s:
+        rows = s.execute(
+            select(Message, StarredMessage.created_at)
+            .join(StarredMessage, StarredMessage.message_id == Message.id)
+            .where(StarredMessage.user_id == user_id)
+            .order_by(StarredMessage.created_at.desc())
+            .limit(limit)
+        ).all()
+        out = []
+        for m, starred_at in rows:
+            d = public_message(m)
+            if d:
+                d["starredAt"] = _iso(starred_at)
+                out.append(d)
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Tic-Tac-Toe 🎮 — the game lives in the message body as JSON, just like polls
+# ---------------------------------------------------------------------------
+_TTT_LINES = [(0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6)]
+
+
+def update_game_move(message_id, user_id, cell):
+    """Apply one move. Returns the updated game dict, or an error string."""
+    with session_scope() as s:
+        m = s.get(Message, message_id)
+        if not m or m.unsent or m.attachment_type != "game" or not m.body:
+            return "Game not found."
+        try:
+            game = json.loads(m.body)
+        except (json.JSONDecodeError, TypeError):
+            return "Game not found."
+        board = game.get("board")
+        if not isinstance(board, list) or len(board) != 9:
+            return "Game not found."
+        if game.get("winner"):
+            return "Game is finished."
+        if not isinstance(cell, int) or cell < 0 or cell > 8 or board[cell]:
+            return "That square is taken."
+        if user_id == game.get("x"):
+            role = "x"
+        elif game.get("o") is None and user_id != game.get("x"):
+            game["o"] = user_id  # in groups the first challenger claims O
+            role = "o"
+        elif user_id == game.get("o"):
+            role = "o"
+        else:
+            return "This match already has two players."
+        if game.get("turn") != role:
+            return "Not your turn."
+        board[cell] = role
+        winner = None
+        for a, b, c in _TTT_LINES:
+            if board[a] and board[a] == board[b] == board[c]:
+                winner = board[a]
+                game["line"] = [a, b, c]
+                break
+        if winner:
+            game["winner"] = winner
+        elif all(board):
+            game["winner"] = "draw"
+        else:
+            game["turn"] = "o" if role == "x" else "x"
+        game["board"] = board
+        m.body = json.dumps(game)
+        return game
 
 
 def is_muted(user_id, conversation_id):
@@ -1367,13 +1589,29 @@ def list_reels(me_id, before_id=None, limit=10, following_only=False):
         ]
 
 
-def increment_reel_views(reel_id):
+def increment_reel_views(reel_id, user_id=None):
+    """Count a view once per user per reel, so re-scrolling can't inflate it.
+    The unique (reel_id, user_id) constraint makes this race-safe: if two
+    requests slip past the pre-check, one insert wins and the other is a no-op."""
     with session_scope() as s:
         r = s.get(Reel, reel_id)
-        if r:
-            r.views = (r.views or 0) + 1
-            return int(r.views)
-        return 0
+        if not r:
+            return 0
+        if user_id:
+            seen = s.execute(
+                select(ReelView.id).where(ReelView.reel_id == reel_id, ReelView.user_id == user_id)
+            ).first()
+            if seen:
+                return int(r.views or 0)
+            try:
+                with s.begin_nested():  # savepoint — a duplicate insert rolls back just this
+                    s.add(ReelView(reel_id=reel_id, user_id=user_id, viewed_at=now_utc()))
+                    s.flush()
+            except IntegrityError:
+                return int(r.views or 0)  # someone else counted this view first
+        # atomic increment so concurrent viewers never clobber each other's +1
+        s.execute(update(Reel).where(Reel.id == reel_id).values(views=func.coalesce(Reel.views, 0) + 1))
+        return int(s.execute(select(Reel.views).where(Reel.id == reel_id)).scalar_one() or 0)
 
 
 def add_reel_comment(reel_id, user_id, text):
@@ -1464,6 +1702,11 @@ def get_or_create_tea_user():
             s.add(tea)
             s.flush()
         return tea.id
+
+
+def reel_url_exists(embed_url):
+    with session_scope() as s:
+        return s.execute(select(Reel.id).where(Reel.video_url == embed_url)).first() is not None
 
 
 def ensure_reel_exists(embed_url, caption):

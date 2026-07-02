@@ -43,6 +43,13 @@
   // A friend's display name, overridden by the user's private nickname if set.
   const friendName = (f) => (f && (f.nickname || f.displayName)) || '';
 
+  // Is it this user's birthday today? (birthday is stored as "MM-DD")
+  const isBdayToday = (u) => {
+    if (!u || !u.birthday) return false;
+    const d = new Date();
+    return u.birthday === String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+
   // Subtle haptic feedback (mobile only; no-op where unsupported).
   function haptic(ms = 12) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
@@ -133,6 +140,8 @@
     peerTypingTimer: null,
     sendTypingTimer: null,
     isTypingSent: false,
+    starredIds: new Set(), // message ids I starred (loaded after login)
+    showArchived: false,   // archived section expanded in the chat list?
   };
 
   // ============================================================
@@ -445,10 +454,20 @@
         await enablePush();
       }
       }, 3000);
-      // Pre-fetch reels so they're ready when user opens the view
+      // Pre-fetch reels so they're ready when user opens the view.
+      // (The reels module owns its state; hand the data over via its setter.)
       api('/api/reels').then((data) => {
-        if (data && data.reels) { reels = data.reels; hasMore = !!data.hasMore; }
+        if (window.__seedReels) window.__seedReels(data);
       }).catch(() => {});
+      // Which messages have I starred? (drives the ⭐ marker + menu label)
+      api('/api/starred/ids').then((r) => {
+        state.starredIds = new Set((r && r.ids) || []);
+      }).catch(() => {});
+      // Birthday greetings 🎂 — celebrate friends whose day is today
+      try {
+        const bdays = Array.from(state.friends.values()).filter(isBdayToday);
+        if (bdays.length) toast('🎂', 'Birthday today!', bdays.map(friendName).join(', '));
+      } catch (e) {}
     }
 
   function showChatsSkeleton() {
@@ -546,6 +565,7 @@
     socket.on('message:unsent', onMessageUnsent);
     socket.on('message:consumed', onMessageConsumed);
     socket.on('poll:update', onPollUpdate);
+    socket.on('game:update', onGameUpdate);
     socket.on('message:edited', onMessageEdited);
     socket.on('conversation:cleared', onConversationCleared);
     socket.on('conversation:pin', onConversationPin);
@@ -644,43 +664,68 @@
     if (msg.attachmentType === 'audio') return who + '🎤 Voice message';
     if (msg.attachmentType === 'location') return who + '📍 Location';
     if (msg.attachmentType === 'file') return who + '📎 ' + (msg.attachmentName || 'File');
+    if (msg.attachmentType === 'game') return who + '🎮 Tic-Tac-Toe';
     return who + (msg.body || '');
   }
 
   function renderChats() {
     updateAppBadge();
     const box = $('#tab-chats');
-    const convs = Array.from(state.conversations.values()).sort((a, b) => {
+    const all = Array.from(state.conversations.values()).sort((a, b) => {
       if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1; // pinned first
       return (b.lastMessage?.createdAt || '').localeCompare(a.lastMessage?.createdAt || '');
     });
-    if (!convs.length) {
+    if (!all.length) {
       box.innerHTML = `<div class="empty-note">No conversations yet.<br>Add a friend and say hi! 👋</div>`;
       return;
     }
-    box.innerHTML = convs
-      .map((c) => {
-        const isG = !!c.isGroup;
-        const au = convAvatar(c);
-        const online = isG ? false : !!(state.friends.get(c.friend.id) || c.friend).online;
-        const active = state.current && state.current.conversationId === c.id;
-        const dotOpt = isG ? {} : { dot: online };
-        return `
-        <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" data-open-conv="${c.id}" data-peer="${isG ? '' : (state.friends.get(c.friend.id) || c.friend).id}" data-group="${isG ? '1' : ''}">
+    const convs = all.filter((c) => !c.archived);
+    const archived = all.filter((c) => !!c.archived);
+    // pop the unread badge only when its count actually changed (not on every re-render)
+    const prevUnread = renderChats._unread || new Map();
+    const nextUnread = new Map();
+    const rowHtml = (c, i) => {
+      const isG = !!c.isGroup;
+      const au = convAvatar(c);
+      const friend = isG ? null : (state.friends.get(c.friend.id) || c.friend);
+      const online = isG ? false : !!friend.online;
+      const active = state.current && state.current.conversationId === c.id;
+      const dotOpt = isG ? {} : { dot: online };
+      nextUnread.set(c.id, c.unread || 0);
+      const bump = c.unread && prevUnread.get(c.id) !== c.unread;
+      const streak = (!isG && c.streak >= 2) ? `<span class="streak-badge">🔥${c.streak}</span>` : '';
+      const bday = (!isG && isBdayToday(friend)) ? '<span class="bday-badge">🎂</span>' : '';
+      return `
+        <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" style="--i:${Math.min(i, 12)}" data-open-conv="${c.id}" data-peer="${isG ? '' : friend.id}" data-group="${isG ? '1' : ''}">
           ${isG ? `<span class="av-wrap">${avatarHtml(au, dotOpt)}<span class="grp-badge">👥</span></span>` : avatarHtml(au, dotOpt)}
           <div class="row-main">
             <div class="row-top">
-              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(convTitle(c))}</span>
+              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(convTitle(c))}${streak}${bday}</span>
               <span class="row-time">${c.muted ? '<span class="row-mute">🔕</span>' : ''}${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
             </div>
             <div class="row-top">
               <span class="row-sub">${escapeHtml(previewText(c.lastMessage, c))}</span>
-              ${c.unread ? `<span class="row-badge ${c.muted ? 'muted' : ''}">${c.unread}</span>` : ''}
+              ${c.unread ? `<span class="row-badge ${c.muted ? 'muted' : ''} ${bump ? 'bump' : ''}">${c.unread}</span>` : ''}
             </div>
           </div>
         </div>`;
-      })
-      .join('');
+    };
+    // staggered entrance only when replacing the loading skeleton (first paint)
+    const firstLoad = !!box.querySelector('.sk-row');
+    let html = convs.map(rowHtml).join('');
+    if (archived.length) {
+      html += `<button class="arch-toggle ${state.showArchived ? 'open' : ''}" data-arch-toggle>📦 Archived <span class="arch-n">${archived.length}</span><span class="arch-chev">›</span></button>`;
+      if (state.showArchived) html += archived.map(rowHtml).join('');
+    }
+    if (!convs.length && !archived.length) {
+      html = `<div class="empty-note">No conversations yet.<br>Add a friend and say hi! 👋</div>`;
+    }
+    box.innerHTML = html;
+    renderChats._unread = nextUnread;
+    if (firstLoad) {
+      box.classList.add('list-anim');
+      setTimeout(() => box.classList.remove('list-anim'), 900);
+    }
   }
 
   function renderFriends() {
@@ -698,7 +743,7 @@
       <div class="row" data-open-conv="${f.conversationId}" data-peer="${f.id}">
         ${avatarHtml(f, { dot: !!f.online })}
         <div class="row-main">
-          <div class="row-name">${escapeHtml(friendName(f))}</div>
+          <div class="row-name">${escapeHtml(friendName(f))}${isBdayToday(f) ? '<span class="bday-badge">🎂</span>' : ''}</div>
           <div class="row-sub">${f.online ? 'Online' : 'Offline'}</div>
         </div>
       </div>`
@@ -908,6 +953,9 @@
   // EVENT DELEGATION (sidebar clicks)
   // ============================================================
   $('#sidebar').addEventListener('click', (e) => {
+    const arch = e.target.closest('[data-arch-toggle]');
+    if (arch) { state.showArchived = !state.showArchived; renderChats(); return; }
+
     const add = e.target.closest('[data-add]');
     if (add) return sendFriendRequest(Number(add.dataset.add), add);
 
@@ -969,6 +1017,7 @@
   async function openConversation(conversationId, peerId) {
     const peer = state.friends.get(peerId);
     if (!peer) return;
+    openConversation._bdayFx = openConversation._bdayFx || new Set();
     saveDraft(); // keep what was typed in the chat we're leaving
     if (state.selecting) exitSelect();
     if (recState) cancelVoiceRecording();
@@ -993,7 +1042,11 @@
       'class="avatar',
       'id="peer-avatar" class="avatar'
     );
-    $('#peer-name').textContent = friendName(peer);
+    const pn = $('#peer-name');
+    pn.textContent = friendName(peer);
+    pn.classList.remove('name-swap');
+    void pn.offsetWidth;
+    pn.classList.add('name-swap');
     updatePeerStatus();
 
     showMessagesSkeleton();
@@ -1015,10 +1068,16 @@
       setComposerBlocked(peer);
       const conv = state.conversations.get(conversationId);
       state.current.unreadAtOpen = conv ? (conv.unread || 0) : 0;
-      renderMessages();
+      renderMessages({ cascade: true });
 
       // clear unread locally
       if (conv) { conv.unread = 0; renderChats(); }
+
+      // birthday celebrant? shower them with confetti (once per session) 🎂
+      if (isBdayToday(peer) && !openConversation._bdayFx.has(peer.id)) {
+        openConversation._bdayFx.add(peer.id);
+        setTimeout(() => playChatEffect('confetti'), 350);
+      }
     } catch (e) {
       $('#messages').innerHTML = `<div class="empty-note">Could not load messages.</div>`;
     }
@@ -1063,7 +1122,7 @@
       }
       renderPinnedBanner(data.pinnedMessage);
       state.current.unreadAtOpen = conv ? (conv.unread || 0) : 0;
-      renderMessages();
+      renderMessages({ cascade: true });
       if (conv) { conv.unread = 0; }
     } catch (e) {
       $('#messages').innerHTML = `<div class="empty-note">Could not load messages.</div>`;
@@ -1106,6 +1165,26 @@
     el.classList.toggle('online', !!peer.online);
     const dot = $('#peer-avatar .dot');
     if (dot) dot.classList.toggle('on', !!peer.online);
+    updatePeerBadges();
+  }
+
+  // Little chips next to the chat-header name: 🔥 streak and 🎂 birthday.
+  function updatePeerBadges() {
+    const nameEl = $('#peer-name');
+    if (!nameEl || !state.current) return;
+    const conv = state.conversations.get(state.current.conversationId);
+    const peer = state.current.peer;
+    const bits = [];
+    if (conv && !conv.isGroup && conv.streak >= 2) bits.push(`<span class="streak-badge" title="Chat streak — message each other daily to keep it!">🔥${conv.streak}</span>`);
+    if (peer && isBdayToday(peer)) bits.push('<span class="bday-badge" title="Birthday today!">🎂</span>');
+    let b = document.getElementById('peer-badges');
+    if (!bits.length) { if (b) b.remove(); return; }
+    if (!b) {
+      b = document.createElement('span');
+      b.id = 'peer-badges';
+      nameEl.appendChild(b);
+    }
+    b.innerHTML = bits.join('');
   }
 
   function renderMessages(opts) {
@@ -1140,6 +1219,17 @@
     });
 
     box.innerHTML = html;
+    // gentle cascade of the last few bubbles when a chat opens (never on
+    // re-renders from reactions/edits/history — those pass no flag)
+    if (opts.cascade) {
+      const rows = box.querySelectorAll('.msg');
+      const n = Math.min(rows.length, 8);
+      for (let k = 0; k < n; k++) {
+        const el = rows[rows.length - 1 - k];
+        el.classList.add('cascade');
+        el.style.setProperty('--i', String(n - 1 - k));
+      }
+    }
     updateSeenRow();
     bindVoicePlayers();
     if (opts.preserveFromHeight != null) {
@@ -1372,7 +1462,8 @@
       const name = m.senderId === state.me.id ? 'You' : escapeHtml(String(msgSenderUser(m).displayName || 'They').split(/\s+/)[0]);
       return `<div class="bwrap">${senderLabel}<div class="bubble unsent">🚫 ${name} unsent a message</div></div>`;
     }
-    const t = `<span class="m-time">${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}${tickHtml(m)}</span>`;
+    const star = (state.starredIds && state.starredIds.has(m.id)) ? '<span class="m-star" title="Starred">⭐</span>' : '';
+    const t = `<span class="m-time">${star}${m.edited ? 'Edited · ' : ''}${fmtTime(m.createdAt)}${tickHtml(m)}</span>`;
     const rx = reactionsHtml(m);
     let inner;
     if (m.attachmentType === 'image' && m.viewOnce) {
@@ -1396,6 +1487,8 @@
       inner = `<div class="bubble loc">${locationCardHtml(m)}</div>`;
     } else if (m.attachmentType === 'poll') {
       inner = `<div class="bubble poll">${pollHtml(m)}</div>`;
+    } else if (m.attachmentType === 'game') {
+      inner = `<div class="bubble game">${gameHtml(m)}</div>`;
     } else if (m.attachmentType === 'file') {
       const cap = m.body ? `<div class="caption">${formatText(escapeHtml(m.body))}</div>` : '';
       inner = `<div class="bubble"><a class="file-card" href="${escapeHtml(mediaUrl(m.attachmentUrl))}" download="${escapeHtml(m.attachmentName || 'file')}" target="_blank" rel="noopener"><span class="file-ico">📎</span><span class="file-meta"><span class="file-name">${escapeHtml(m.attachmentName || 'File')}</span><span class="file-sub">Download</span></span></a>${cap}</div>`;
@@ -1666,6 +1759,7 @@
           <button class="mm-act" data-att="media">Photo &amp; Video</button>
           <button class="mm-act" data-att="location">📍 Location</button>
           <button class="mm-act" data-att="poll">📊 Poll</button>
+          <button class="mm-act" data-att="game">🎮 Tic-Tac-Toe</button>
           <button class="mm-act" data-att="file">File</button>
           <button class="mm-act" data-cancel="1">Cancel</button>
         </div>
@@ -1683,6 +1777,7 @@
         else if (kind === 'media') { fileInput.accept = 'image/*,video/*'; fileInput.click(); }
         else if (kind === 'location') { shareLocation(); }
         else if (kind === 'poll') { openPollComposer(); }
+        else if (kind === 'game') { startGame(); }
         else { fileInput.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt,.zip'; fileInput.click(); }
         return;
       }
@@ -1790,6 +1885,46 @@
     }).join('');
     return `<div class="poll-q">📊 ${escapeHtml(p.question)}</div><div class="poll-opts">${opts}</div>` +
       `<div class="poll-total">${total} vote${total === 1 ? '' : 's'}${myVote === null ? ' · tap to vote' : ''}</div>`;
+  }
+
+  // ---- Tic-Tac-Toe bubble 🎮 (game state lives in m.game, like polls) ----
+  function gamePlayerName(uid) {
+    if (!uid) return null;
+    if (state.me && uid === state.me.id) return 'You';
+    const f = state.friends.get(uid);
+    if (f) return String(friendName(f)).split(/\s+/)[0];
+    if (state.current && state.current.group) {
+      const mem = (state.current.group.members || []).find((u) => u.id === uid);
+      if (mem) return String(mem.displayName || '').split(/\s+/)[0];
+    }
+    return 'Player';
+  }
+  function gameHtml(m) {
+    const g = m.game || { board: [], x: 0, o: null, turn: 'x', winner: null };
+    const board = Array.isArray(g.board) && g.board.length === 9 ? g.board : ['', '', '', '', '', '', '', '', ''];
+    const meId = state.me ? state.me.id : 0;
+    const myRole = meId === g.x ? 'x' : (meId === g.o ? 'o' : (g.o === null && meId !== g.x ? 'o?' : null));
+    const live = !g.winner;
+    const myTurn = live && ((g.turn === 'x' && myRole === 'x') || (g.turn === 'o' && (myRole === 'o' || myRole === 'o?')));
+    const line = Array.isArray(g.line) ? g.line : [];
+    const cells = board.map((v, i) => {
+      const tappable = live && !v && myTurn;
+      return `<button class="ttt-cell ${v} ${line.includes(i) ? 'win' : ''} ${v ? 'filled' : ''}" data-gcell="${i}" data-game="${m.id}" ${tappable ? '' : 'disabled'}>${v === 'x' ? '✕' : v === 'o' ? '◯' : ''}</button>`;
+    }).join('');
+    const xName = gamePlayerName(g.x) || '?';
+    const oName = g.o ? (gamePlayerName(g.o) || '?') : 'Anyone — tap to join!';
+    let status;
+    if (g.winner === 'draw') status = 'Draw! 🤝';
+    else if (g.winner) {
+      const wid = g.winner === 'x' ? g.x : g.o;
+      status = (wid === meId ? 'You won! 🎉' : `${gamePlayerName(wid) || 'They'} won! 🏆`);
+    } else if (myTurn) status = 'Your turn ✨';
+    else status = `${g.turn === 'x' ? xName : (g.o ? oName : 'Opponent')}'s turn…`;
+    const again = g.winner ? `<button class="ttt-again" data-game-again="1">Play again</button>` : '';
+    return `<div class="ttt-head">🎮 Tic-Tac-Toe</div>
+      <div class="ttt-players"><span class="ttt-x">✕ ${escapeHtml(xName)}</span><span class="ttt-vs">vs</span><span class="ttt-o">◯ ${escapeHtml(oName)}</span></div>
+      <div class="ttt-grid">${cells}</div>
+      <div class="ttt-status">${escapeHtml(status)}</div>${again}`;
   }
 
   async function handlePickedFiles(files) {
@@ -2281,6 +2416,8 @@
     }
     conv.lastMessage = msg;
     conv.friend = friend;
+    conv.archived = false; // a new message revives an archived chat
+    if (typeof env.streak === 'number') conv.streak = env.streak; // 🔥
 
     // I received it — tell the sender it was delivered (✓✓), even if I'm not
     // looking at this chat right now.
@@ -2301,6 +2438,7 @@
     }
 
     renderChats();
+    if (isOpen) updatePeerBadges();
   }
 
   function onGroupMessageNew(env) {
@@ -2317,6 +2455,7 @@
       loadConversations().then(renderChats).catch(() => {});
     }
     conv.lastMessage = msg;
+    conv.archived = false; // a new message revives an archived chat
     // learn the sender as a group member if we didn't know them
     if (env.sender && conv.group && !(conv.group.members || []).some((u) => u.id === env.sender.id)) {
       conv.group.members = (conv.group.members || []).concat(env.sender);
@@ -2441,6 +2580,21 @@
       }
       return;
     }
+    // tap a Tic-Tac-Toe square -> play the move (server validates the turn)
+    const gcell = e.target.closest('[data-gcell]');
+    if (gcell && !gcell.disabled) {
+      const mid = Number(gcell.dataset.game);
+      const cell = Number(gcell.dataset.gcell);
+      if (state.socket) {
+        haptic();
+        state.socket.emit('game:move', { messageId: mid, cell }, (resp) => {
+          if (resp && resp.error) toast('🎮', 'Oops', resp.error);
+        });
+      }
+      return;
+    }
+    // "Play again" under a finished game -> start a fresh match
+    if (e.target.closest('[data-game-again]')) { startGame(); return; }
     // tap a view-once photo -> open it once, then it's burned for everyone
     const vonce = e.target.closest('[data-vonce]');
     if (vonce) {
@@ -2674,7 +2828,16 @@
     btn.classList.toggle('hidden', !show);
     const cnt = document.getElementById('sb-count');
     if (cnt) {
-      if (show && newSinceScroll > 0) { cnt.textContent = newSinceScroll > 99 ? '99+' : String(newSinceScroll); cnt.classList.remove('hidden'); }
+      if (show && newSinceScroll > 0) {
+        const label = newSinceScroll > 99 ? '99+' : String(newSinceScroll);
+        if (cnt.textContent !== label) { // bump only when the count changes
+          cnt.textContent = label;
+          cnt.classList.remove('bump');
+          void cnt.offsetWidth;
+          cnt.classList.add('bump');
+        }
+        cnt.classList.remove('hidden');
+      }
       else cnt.classList.add('hidden');
     }
     if (!show) newSinceScroll = 0;
@@ -2881,11 +3044,12 @@
     overlay.innerHTML = `
       <div class="mm-sheet">
         <div class="mm-reacts">
-          ${REACTIONS.map((em) => `<button class="mm-react ${myReact && myReact.emoji === em ? 'on' : ''}" data-react="${em}">${em}</button>`).join('')}
-          <button class="mm-react mm-plus" data-emoji-more="1" aria-label="More emojis">+</button>
+          ${REACTIONS.map((em, i) => `<button class="mm-react ${myReact && myReact.emoji === em ? 'on' : ''}" style="--i:${i}" data-react="${em}">${em}</button>`).join('')}
+          <button class="mm-react mm-plus" style="--i:${REACTIONS.length}" data-emoji-more="1" aria-label="More emojis">+</button>
         </div>
         <div class="mm-actions">
           <button class="mm-act" data-reply="1">Reply</button>
+          <button class="mm-act" data-star="1">${state.starredIds.has(m.id) ? '⭐ Unstar' : '⭐ Star'}</button>
           ${(state.current && state.current.isGroup && !mine) ? `<button class="mm-act" data-reply-private="1">Reply privately</button>` : ''}
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-forward="1">Forward</button>` : ''}
           ${(m.body || m.attachmentUrl) ? `<button class="mm-act" data-pin-msg="1">${state.pinned && state.pinned.id === m.id ? 'Unpin' : 'Pin'}</button>` : ''}
@@ -2906,6 +3070,7 @@
       if (react) { reactToMessage(mid, react.dataset.react); return close(); }
       if (e.target.closest('[data-emoji-more]')) { close(); openEmojiPicker(mid); return; }
       if (e.target.closest('[data-reply]')) { startReply(m); return close(); }
+      if (e.target.closest('[data-star]')) { close(); toggleStar(mid); return; }
       if (e.target.closest('[data-reply-private]')) { close(); replyPrivately(m); return; }
       if (e.target.closest('[data-forward]')) { close(); openForward(m); return; }
       if (e.target.closest('[data-pin-msg]')) {
@@ -2924,6 +3089,71 @@
       if (e.target.closest('[data-cancel]')) return close();
       // backdrop tap — ignore the trailing tap that opened the sheet
       if (e.target === overlay && Date.now() - openedAt > 220) close();
+    });
+  }
+
+  // ---- starred messages ⭐ (per-user bookmarks, synced to the server) ----
+  async function toggleStar(mid) {
+    try {
+      const r = await api('/api/messages/' + mid + '/star', { method: 'POST' });
+      if (r.starred) state.starredIds.add(mid);
+      else state.starredIds.delete(mid);
+      // refresh the little ⭐ marker on the bubble if it's on screen
+      const m = (state.messages || []).find((x) => x.id === mid);
+      if (m) {
+        const wrap = messagesEl.querySelector(`.msg[data-mid="${mid}"] .bwrap`);
+        if (wrap) wrap.outerHTML = renderBubble(m);
+      }
+      haptic();
+      toast('⭐', r.starred ? 'Starred' : 'Unstarred', r.starred ? 'Saved to your starred messages' : 'Removed');
+    } catch (e) { toast('⚠️', 'Error', e.message); }
+  }
+
+  async function openStarred() {
+    const overlay = document.createElement('div');
+    overlay.className = 'msg-menu';
+    overlay.innerHTML = `
+      <div class="mm-sheet fwd-sheet">
+        <div class="settings-title">⭐ Starred messages</div>
+        <div class="fwd-list" id="star-list"><div class="empty-note">Loading…</div></div>
+        <div class="mm-actions"><button class="mm-act" data-cancel="1">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200); };
+    const list = overlay.querySelector('#star-list');
+    try {
+      const r = await api('/api/starred');
+      const msgs = (r && r.messages) || [];
+      if (!msgs.length) {
+        list.innerHTML = '<div class="empty-note">Nothing starred yet.<br>Long-press a message → ⭐ Star.</div>';
+      } else {
+        list.innerHTML = msgs.map((m) => {
+          const conv = state.conversations.get(m.conversationId);
+          const title = conv ? convTitle(conv) : 'Chat';
+          return `<button class="star-row" data-star-open="${m.conversationId}" data-star-mid="${m.id}">
+            <span class="star-prev">${escapeHtml(previewText(m, conv) || '…')}</span>
+            <span class="star-meta">${escapeHtml(title)} · ${fmtTime(m.createdAt)}</span>
+          </button>`;
+        }).join('');
+      }
+    } catch (e) {
+      list.innerHTML = '<div class="empty-note">Could not load starred messages.</div>';
+    }
+    overlay.addEventListener('click', async (e) => {
+      const row = e.target.closest('[data-star-open]');
+      if (row) {
+        const cid = Number(row.dataset.starOpen);
+        const mid = Number(row.dataset.starMid);
+        const conv = state.conversations.get(cid);
+        close();
+        if (!conv) { toast('🔎', 'Unavailable', 'That chat is no longer here'); return; }
+        if (conv.isGroup) await openGroup(cid);
+        else await openConversation(cid, conv.friend.id);
+        jumpToMessage(mid);
+        return;
+      }
+      if (e.target.closest('[data-cancel]') || e.target === overlay) close();
     });
   }
 
@@ -3032,6 +3262,9 @@
     state.pinned = msg || null;
     if (!msg) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
     bar.classList.remove('hidden');
+    bar.classList.remove('pin-in');
+    void bar.offsetWidth;
+    bar.classList.add('pin-in');
     bar.innerHTML = `
       <span class="pin-ic">${IC.pin}</span>
       <div class="pin-main" data-pin-jump="${msg.id}">
@@ -3168,6 +3401,30 @@
     }
   }
 
+  function onGameUpdate(payload) {
+    if (!payload || !payload.game) return;
+    const m = (state.messages || []).find((x) => x.id === payload.messageId);
+    if (!m) return;
+    m.game = payload.game;
+    if (state.current && state.current.conversationId === payload.conversationId) {
+      const wrap = messagesEl.querySelector(`.msg[data-mid="${payload.messageId}"] .bwrap`);
+      if (wrap) wrap.outerHTML = renderBubble(m);
+    }
+    // confetti when I win 🎉
+    const g = payload.game;
+    if (g.winner && g.winner !== 'draw' && state.me && (g.winner === 'x' ? g.x : g.o) === state.me.id) {
+      playChatEffect('confetti');
+    }
+  }
+
+  // Start a fresh Tic-Tac-Toe match in the open chat.
+  function startGame() {
+    if (!state.current || !state.socket) return;
+    state.socket.emit('game:create', { ...sendTarget() }, (resp) => {
+      if (resp && resp.error) toast('🎮', 'Could not start', resp.error);
+    });
+  }
+
   // A view-once photo was opened by its recipient → burn it on both sides.
   function onMessageConsumed(payload) {
     if (!payload) return;
@@ -3286,6 +3543,7 @@
         <div class="mm-actions">
           <button class="mm-act" data-pin="1">${conv.pinned ? 'Unpin' : 'Pin'} conversation</button>
           <button class="mm-act" data-mute="1">${conv.muted ? 'Unmute' : 'Mute'} notifications</button>
+          <button class="mm-act" data-archive="1">${conv.archived ? 'Unarchive' : '📦 Archive'}</button>
           <button class="mm-act" data-profile="1">View profile</button>
           <button class="mm-act" data-wallpaper="1">Chat wallpaper</button>
           <button class="mm-act" data-rename="1">Rename</button>
@@ -3301,6 +3559,7 @@
     overlay.addEventListener('click', (e) => {
       if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
       if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
+      if (e.target.closest('[data-archive]')) { close(); toggleConvPref(cid, 'archived', !conv.archived); return; }
       if (e.target.closest('[data-profile]')) { close(); openProfile(peer, cid); return; }
       if (e.target.closest('[data-wallpaper]')) { close(); openWallpaperPicker(cid); return; }
       if (e.target.closest('[data-rename]')) { close(); openRenameFriend(peer); return; }
@@ -3323,6 +3582,7 @@
         <div class="mm-actions">
           <button class="mm-act" data-pin="1">${conv.pinned ? 'Unpin' : 'Pin'} conversation</button>
           <button class="mm-act" data-mute="1">${conv.muted ? 'Unmute' : 'Mute'} notifications</button>
+          <button class="mm-act" data-archive="1">${conv.archived ? 'Unarchive' : '📦 Archive'}</button>
           <button class="mm-act" data-members="1">View members (${n})</button>
           <button class="mm-act" data-wallpaper="1">Chat wallpaper</button>
           <button class="mm-act" data-rename="1">Rename group</button>
@@ -3339,6 +3599,7 @@
     overlay.addEventListener('click', (e) => {
       if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
       if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
+      if (e.target.closest('[data-archive]')) { close(); toggleConvPref(cid, 'archived', !conv.archived); return; }
       if (e.target.closest('[data-members]')) { close(); openGroupMembers(group); return; }
       if (e.target.closest('[data-wallpaper]')) { close(); openWallpaperPicker(cid); return; }
       if (e.target.closest('[data-rename]')) { close(); openRenameGroup(cid, group); return; }
@@ -3366,6 +3627,14 @@
   function applyWallpaper(cid) {
     if (!messagesEl) return;
     const wp = WALLPAPERS.find((w) => w.id === wpFor(cid));
+    // crossfade only when the wallpaper actually changes (not on re-open)
+    const wpId = wp ? wp.id : '';
+    if (messagesEl.dataset.wp !== wpId) {
+      messagesEl.dataset.wp = wpId;
+      messagesEl.classList.remove('wp-fade');
+      void messagesEl.offsetWidth;
+      messagesEl.classList.add('wp-fade');
+    }
     if (wp && wp.css) {
       messagesEl.style.backgroundImage = wp.css;
       messagesEl.style.backgroundSize = 'cover';
@@ -4202,9 +4471,10 @@
     const conv = state.conversations.get(cid);
     try {
       const r = await api('/api/conversations/' + cid + '/prefs', { method: 'POST', body: { [key]: value } });
-      if (conv) { conv.pinned = r.pinned; conv.muted = r.muted; }
+      if (conv) { conv.pinned = r.pinned; conv.muted = r.muted; conv.archived = r.archived; }
       renderChats();
       if (key === 'pinned') toast(r.pinned ? '📌' : '📍', r.pinned ? 'Pinned' : 'Unpinned', r.pinned ? 'Kept at the top' : 'Removed from top');
+      else if (key === 'archived') toast('📦', r.archived ? 'Archived' : 'Unarchived', r.archived ? 'Hidden below the chat list' : 'Back in your chats');
       else toast(r.muted ? '🔕' : '🔔', r.muted ? 'Muted' : 'Unmuted', r.muted ? "You won't be notified" : 'Notifications on');
     } catch (e) { toast('⚠️', 'Error', e.message); }
   }
@@ -4736,6 +5006,14 @@
           </div>
         </div>
         <div class="set-section">
+          <div class="set-label">🎂 Birthday <span class="set-hint">friends see a 🎂 on your day</span></div>
+          <div class="bday-row">
+            <select id="bd-m" class="bday-sel"><option value="">Month</option>${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((n, i) => `<option value="${String(i + 1).padStart(2, '0')}">${n}</option>`).join('')}</select>
+            <select id="bd-d" class="bday-sel"><option value="">Day</option>${Array.from({ length: 31 }, (_, i) => `<option value="${String(i + 1).padStart(2, '0')}">${i + 1}</option>`).join('')}</select>
+            <button class="btn-sm btn-soft" id="bd-clear">Clear</button>
+          </div>
+        </div>
+        <div class="set-section">
           <div class="set-label">Privacy</div>
           <div class="set-list">
             <button class="set-row" data-priv="hideLastSeen"><span class="set-main">${IC.eyeOff}<span>Hide last seen &amp; online</span></span><span class="set-toggle ${state.me && state.me.hideLastSeen ? 'on' : ''}"></span></button>
@@ -4743,6 +5021,7 @@
           </div>
         </div>
         <div class="set-section set-list">
+          <button class="set-row" data-starred="1"><span class="set-main">⭐<span>Starred messages</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-editprofile="1"><span class="set-main">${IC.user}<span>Edit profile</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-invite="1"><span class="set-main">${IC.share}<span>Invite a friend</span></span><span class="set-state">›</span></button>
           <button class="set-row" data-password="1"><span class="set-main">${IC.lock}<span>Change password</span></span><span class="set-state">›</span></button>
@@ -4755,7 +5034,25 @@
     requestAnimationFrame(() => { overlay.classList.add('show'); overlay.querySelector('.settings-sheet').scrollTop = 0; });
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
 
+    // birthday picker — prefill from my profile, save when both parts are set
+    const bdM = overlay.querySelector('#bd-m');
+    const bdD = overlay.querySelector('#bd-d');
+    const myBday = (state.me && state.me.birthday) || '';
+    if (/^\d{2}-\d{2}$/.test(myBday)) { bdM.value = myBday.slice(0, 2); bdD.value = myBday.slice(3); }
+    const saveBday = async (bday) => {
+      try {
+        const r = await api('/api/me/birthday', { method: 'POST', body: { birthday: bday } });
+        if (r && r.me) Object.assign(state.me, r.me);
+        toast('🎂', bday ? 'Birthday saved' : 'Birthday cleared', bday ? 'Friends will celebrate with you!' : '');
+      } catch (err) { toast('⚠️', 'Error', 'Could not save birthday'); }
+    };
+    const onBdayChange = () => { if (bdM.value && bdD.value) saveBday(bdM.value + '-' + bdD.value); };
+    bdM.addEventListener('change', onBdayChange);
+    bdD.addEventListener('change', onBdayChange);
+    overlay.querySelector('#bd-clear').addEventListener('click', () => { bdM.value = ''; bdD.value = ''; saveBday(''); });
+
     overlay.addEventListener('click', async (e) => {
+      if (e.target.closest('[data-starred]')) { close(); openStarred(); return; }
       const ts = e.target.closest('[data-theme-set]');
       if (ts) { applyTheme(ts.dataset.themeSet); overlay.querySelectorAll('[data-theme-set]').forEach((b) => b.classList.toggle('on', b === ts)); return; }
       const sw = e.target.closest('[data-accent]');
@@ -4936,9 +5233,18 @@
         }
         if (e.target.closest('#sr-send')) {
           if (!selected.size || !state.socket) return;
-          selected.forEach((toUserId) => {
-            state.socket.emit('message:send', { toUserId, body: '', attachment: { url: r.videoUrl, type: 'video', name: 'reel.mp4' }, replyToId: null });
-          });
+          // Embeds aren't playable video files — share those as a watch link.
+          const isEmbed = r.source === 'youtube' || r.source === 'tiktok';
+          let payloadFor;
+          if (isEmbed) {
+            let link = r.videoUrl;
+            const em = /\/embed\/([\w-]{11})/.exec(link || '');
+            if (r.source === 'youtube' && em) link = 'https://youtu.be/' + em[1];
+            payloadFor = (toUserId) => ({ toUserId, body: '🎬 ' + link, attachment: null, replyToId: null });
+          } else {
+            payloadFor = (toUserId) => ({ toUserId, body: '', attachment: { url: r.videoUrl, type: 'video', name: 'reel.mp4' }, replyToId: null });
+          }
+          selected.forEach((toUserId) => state.socket.emit('message:send', payloadFor(toUserId)));
           close();
           toast('↪️', 'Shared', selected.size > 1 ? `Sent to ${selected.size} chats` : 'Reel shared');
           return;
@@ -4950,8 +5256,9 @@
     function openReels() {
       view.classList.remove('hidden');
       document.body.classList.add('reels-open');
-      // restore iframes that were cleared on close
+      // restore iframes AND videos that were cleared on close
       feed.querySelectorAll('.reel-embed iframe[data-src]').forEach((ifr) => { ifr.src = ifr.dataset.src; delete ifr.dataset.src; });
+      feed.querySelectorAll('video[data-src]').forEach((v) => { v.src = v.dataset.src; v.load(); delete v.dataset.src; });
       if (!reels.length) { loadReels(true); return; }
       // render cached reels synchronously (inside user gesture -> allows autoplay with sound)
       if (!feed.children.length || feed.querySelector('.reels-empty')) {
@@ -4969,19 +5276,32 @@
     function closeReels() {
       view.classList.add('hidden');
       document.body.classList.remove('reels-open');
-      feed.querySelectorAll('video').forEach((v) => { v.pause(); v.src = ''; v.load(); });
-      feed.querySelectorAll('.reel-embed iframe').forEach((ifr) => { ifr.dataset.src = ifr.src; ifr.src = ''; });
+      // remember every source so reopening restores them (attribute, not
+      // property — the property reflects the page URL once cleared)
+      feed.querySelectorAll('video').forEach((v) => {
+        const cur = v.getAttribute('src');
+        if (cur) v.dataset.src = cur;
+        v.pause(); v.removeAttribute('src'); v.load();
+      });
+      feed.querySelectorAll('.reel-embed iframe').forEach((ifr) => {
+        const cur = ifr.getAttribute('src');
+        if (cur) ifr.dataset.src = cur;
+        ifr.removeAttribute('src');
+      });
       if (io) io.disconnect();
     }
 
+    let loadSeq = 0; // invalidates in-flight loads when the tab switches
     async function loadReels(first) {
       if (loading || (!hasMore && !first)) return;
       loading = true;
+      const seq = ++loadSeq;
       try {
         const params = [];
         if (feedMode === 'following') params.push('following=1');
         if (!first && reels.length) params.push('before=' + reels[reels.length - 1].id);
         const data = await api('/api/reels' + (params.length ? '?' + params.join('&') : ''));
+        if (seq !== loadSeq) return; // a tab switch superseded this request
         hasMore = !!data.hasMore;
         const fresh = data.reels || [];
         if (first) { reels = fresh; feed.innerHTML = ''; }
@@ -4992,7 +5312,7 @@
         }
         observeReels();
       } catch (e) { /* ignore */ }
-      finally { loading = false; }
+      finally { if (seq === loadSeq) loading = false; }
     }
 
     function renderReel(r) {
@@ -5003,11 +5323,20 @@
       const mine = state.me && r.author && r.author.id === state.me.id;
       if (r.author) el.dataset.uid = r.author.id;
       const isEmbed = r.source === 'youtube' || r.source === 'tiktok';
+      // YouTube's IFrame API only obeys postMessage commands when the embed
+      // knows our origin — append it here (the stored URL is origin-agnostic).
+      let src = r.videoUrl;
+      if (r.source === 'youtube') {
+        src += (src.includes('?') ? '&' : '?') + 'origin=' + encodeURIComponent(location.origin) + '&widgetid=' + r.id;
+      }
+      // .reel-tap sits over the iframe so taps reach OUR click handler instead
+      // of disappearing into the cross-origin embed (tap = toggle sound).
       const mediaHtml = isEmbed
-        ? `<div class="reel-embed"><iframe src="${escapeHtml(r.videoUrl)}" frameborder="0" allow="autoplay; encrypted-media; accelerometer; gyroscope" allowfullscreen></iframe></div>`
+        ? `<div class="reel-embed"><iframe src="${escapeHtml(src)}" frameborder="0" allow="autoplay; encrypted-media; accelerometer; gyroscope" allowfullscreen></iframe><div class="reel-tap"></div></div>`
         : `<video class="reel-video" src="${escapeHtml(mediaUrl(r.videoUrl))}" loop playsinline preload="metadata"></video>`;
       el.innerHTML =
         mediaHtml +
+        `<div class="reel-sound" aria-hidden="true">🔇</div>` +
         `<div class="reel-side">
           <button class="reel-act reel-like ${r.likedByMe ? 'on' : ''}" data-like aria-label="Like">${IC.heart}<span class="reel-like-n">${r.likeCount || 0}</span></button>
           <button class="reel-act" data-comment aria-label="Comments">${IC.comment}<span class="reel-cmt-n">${r.commentCount || 0}</span></button>
@@ -5019,13 +5348,30 @@
           ${r.caption ? `<div class="reel-caption">${escapeHtml(r.caption)}</div>` : ''}
           <div class="reel-views"><span class="reel-views-n">${r.views || 0}</span> views${isEmbed ? ' · <span class="reel-source">' + (r.source === 'youtube' ? 'YouTube' : 'TikTok') + '</span>' : ''}</div>
         </div>`;
+      const ifr = el.querySelector('.reel-embed iframe');
+      if (ifr) {
+        ifr.dataset.wid = r.id;
+        // register with the player as soon as it loads, so commands work
+        ifr.addEventListener('load', () => ytListen(ifr));
+      }
       return el;
+    }
+
+    // YouTube's widget API DROPS every command until the parent window has
+    // introduced itself with a "listening" handshake — send it before anything.
+    function ytListen(ifr) {
+      try {
+        if (ifr && ifr.contentWindow) {
+          ifr.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: String(ifr.dataset.wid || '1'), channel: 'widget' }), '*');
+        }
+      } catch (e) {}
     }
 
     // Control a YouTube embed (mute/unMute/play) via the IFrame API postMessage.
     function ytCmd(ifr, func, args) {
       try {
         if (ifr && ifr.contentWindow) {
+          ytListen(ifr); // harmless if already registered
           ifr.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: args || [] }), '*');
         }
       } catch (e) {}
@@ -5039,28 +5385,29 @@
           const ifr = e.target.querySelector('.reel-embed iframe');
           // restore iframe as soon as it enters the viewport (not just at 60%)
           if (e.isIntersecting) {
-            if (ifr && !ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
+            if (ifr && !ifr.getAttribute('src') && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
           }
           if (e.isIntersecting && e.intersectionRatio >= 0.6) {
             // restore & play video
             if (v) {
-              if (!v.src && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
+              if (!v.getAttribute('src') && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
               v.muted = !unmuted;
               v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
             }
             // carry the sound setting onto the now-centred YouTube embed
             if (ifr && unmuted) { setTimeout(() => { ytCmd(ifr, 'unMute'); ytCmd(ifr, 'setVolume', [100]); ytCmd(ifr, 'playVideo'); }, 600); }
+            // count the view only once it's actually watched (>=60% visible)
+            const id = Number(e.target.dataset.id);
+            if (id && !viewed.has(id)) {
+              viewed.add(id);
+              api('/api/reels/' + id + '/view', { method: 'POST' }).then((res) => {
+                const n = e.target.querySelector('.reel-views-n');
+                if (n && res && typeof res.views === 'number') n.textContent = res.views;
+              }).catch(() => {});
+            }
           } else {
             if (v) v.pause();
             if (ifr) ytCmd(ifr, 'mute'); // keep off-screen embeds quiet
-          }
-          const id = Number(e.target.dataset.id);
-          if (id && !viewed.has(id)) {
-            viewed.add(id);
-            api('/api/reels/' + id + '/view', { method: 'POST' }).then((res) => {
-              const n = e.target.querySelector('.reel-views-n');
-              if (n && res && typeof res.views === 'number') n.textContent = res.views;
-            }).catch(() => {});
           }
         });
       }, { root: feed, threshold: [0, 0.6, 1] });
@@ -5083,6 +5430,8 @@
       });
       const v = best && best.querySelector('video');
       if (v && v.paused) { v.muted = !unmuted; v.play().catch(() => {}); }
+      const bifr = best && best.querySelector('.reel-embed iframe');
+      if (bifr) { ytCmd(bifr, 'playVideo'); if (unmuted) { ytCmd(bifr, 'unMute'); ytCmd(bifr, 'setVolume', [100]); } }
     }
     window.addEventListener('focus', resumeCurrentReel);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCurrentReel(); });
@@ -5130,20 +5479,34 @@
       const ifr = reelEl.querySelector('.reel-embed iframe');
       if (ifr) {
         unmuted = !unmuted;
-        feed.querySelectorAll('.reel-embed iframe').forEach((f) => {
-          if (unmuted) { ytCmd(f, 'unMute'); ytCmd(f, 'setVolume', [100]); } else { ytCmd(f, 'mute'); }
-        });
-        const tapped = reelEl.querySelector('.reel-mute'); // flash the speaker icon
-        if (tapped) reelEl.classList.toggle('sound-on', unmuted);
+        if (unmuted) { ytCmd(ifr, 'unMute'); ytCmd(ifr, 'setVolume', [100]); ytCmd(ifr, 'playVideo'); }
+        else ytCmd(ifr, 'mute');
+        // everything except the tapped reel stays quiet
+        feed.querySelectorAll('.reel-embed iframe').forEach((f) => { if (f !== ifr) ytCmd(f, 'mute'); });
+        flashSound(reelEl, unmuted);
+        haptic();
         return;
       }
       if (!unmuted) {
         unmuted = true;
         feed.querySelectorAll('video').forEach((x) => { x.muted = false; });
         if (v) v.play().catch(() => {});
+        flashSound(reelEl, true);
       } else if (v && v.paused) v.play().catch(() => {});
       else if (v) v.pause();
     });
+
+    // Flash a 🔊/🔇 badge in the middle of the reel so the tap has feedback.
+    function flashSound(reelEl, on) {
+      const badge = reelEl.querySelector('.reel-sound');
+      if (!badge) return;
+      badge.textContent = on ? '🔊' : '🔇';
+      badge.classList.remove('show');
+      void badge.offsetWidth;
+      badge.classList.add('show');
+      clearTimeout(badge._t);
+      badge._t = setTimeout(() => badge.classList.remove('show'), 900);
+    }
 
     feed.addEventListener('scroll', () => {
       if (feed.scrollTop + feed.clientHeight * 2.5 > feed.scrollHeight) loadReels(false);
@@ -5164,15 +5527,19 @@
         feed.querySelectorAll('.reel').forEach((el) => {
           const r = el.getBoundingClientRect();
           const offScreen = r.bottom < top || r.top > bot;
+          // Use the src ATTRIBUTE, not the property: after removal the property
+          // reflects the page URL (truthy!) and would clobber the saved link.
           const ifr = el.querySelector('iframe');
           if (ifr) {
-            if (offScreen && ifr.src) { ifr.dataset.src = ifr.src; ifr.src = ''; }
-            else if (!offScreen && !ifr.src && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
+            const cur = ifr.getAttribute('src');
+            if (offScreen && cur) { ifr.dataset.src = cur; ifr.removeAttribute('src'); }
+            else if (!offScreen && !cur && ifr.dataset.src) { ifr.src = ifr.dataset.src; delete ifr.dataset.src; }
           }
           const v = el.querySelector('video');
           if (v) {
-            if (offScreen && v.src) { v.dataset.src = v.src; v.pause(); v.src = ''; v.load(); }
-            else if (!offScreen && !v.src && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
+            const cur = v.getAttribute('src');
+            if (offScreen && cur) { v.dataset.src = cur; v.pause(); v.removeAttribute('src'); v.load(); }
+            else if (!offScreen && !cur && v.dataset.src) { v.src = v.dataset.src; v.load(); delete v.dataset.src; }
           }
         });
       }, 400);
@@ -5320,8 +5687,18 @@
       feedMode = mode;
       document.querySelectorAll('.reels-tab').forEach((x) => x.classList.toggle('on', x === t));
       reels = []; hasMore = true;
+      loading = false; loadSeq++; // cancel any in-flight page from the old tab
+      feed.innerHTML = '';
       loadReels(true);
     }));
+
+    // Boot-time pre-fetch hands its data in here (module state is private).
+    window.__seedReels = (data) => {
+      if (!reels.length && data && Array.isArray(data.reels)) {
+        reels = data.reels;
+        hasMore = !!data.hasMore;
+      }
+    };
   })();
 
   // ============================================================
