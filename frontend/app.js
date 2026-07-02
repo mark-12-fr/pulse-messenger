@@ -960,6 +960,9 @@
       state.conversations.forEach((c) => { n += (c.unread || 0); });
       if (n > 0) navigator.setAppBadge(n).catch(() => {});
       else navigator.clearAppBadge().catch(() => {});
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'badge', count: n });
+      }
     } catch (e) {}
   }
 

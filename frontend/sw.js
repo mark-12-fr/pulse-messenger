@@ -67,6 +67,14 @@ self.addEventListener('push', (event) => {
   })());
 });
 
+self.addEventListener('message', (event) => {
+  const d = event.data || {};
+  if (d.type === 'badge' && self.navigator && self.navigator.setAppBadge) {
+    if (d.count > 0) self.navigator.setAppBadge(d.count).catch(() => {});
+    else self.navigator.clearAppBadge().catch(() => {});
+  }
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const nd = event.notification.data || {};
