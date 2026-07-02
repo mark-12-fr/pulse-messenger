@@ -249,6 +249,8 @@ socketio = SocketIO(
     cors_allowed_origins=ORIGINS,
     async_mode=ASYNC_MODE,
     max_http_buffer_size=2 * 1024 * 1024,
+    ping_interval=30,
+    ping_timeout=15,
 )
 
 AVATAR_COLORS = [
@@ -1867,12 +1869,12 @@ def _ice_servers():
         servers.append({"urls": urls, "username": _TURN_USER, "credential": _TURN_CRED})
     else:
         fallbacks = [
+            ("turns:turn.ctbg.xyz:443", "free", "free"),
+            ("turn:turn.ctbg.xyz:3478", "free", "free"),
+            ("turn:turn.ctbg.xyz:80", "free", "free"),
             ("turn:openrelay.metered.ca:80", "openrelayproject", "openrelayproject"),
             ("turn:openrelay.metered.ca:443", "openrelayproject", "openrelayproject"),
             ("turn:openrelay.metered.ca:443?transport=tcp", "openrelayproject", "openrelayproject"),
-            ("turn:turn.anyfirewall.com:4555", "anyfirewall", "anyfirewall"),
-            ("turn:turnserver.asocialcore.com:3478", "test", "test"),
-            ("turn:209.141.56.239:3478", "test", "test"),
         ]
         for url, user, cred in fallbacks:
             servers.append({"urls": url, "username": user, "credential": cred})

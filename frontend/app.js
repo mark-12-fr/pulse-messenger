@@ -522,7 +522,7 @@
   // SOCKET
   // ============================================================
   function connectSocket() {
-    const opts = { auth: { token: state.token }, transports: ['websocket', 'polling'] };
+    const opts = { auth: { token: state.token }, transports: ['websocket', 'polling'], reconnectionDelay: 1000, reconnectionDelayMax: 10000, reconnectionAttempts: Infinity };
     const socket = API_BASE ? io(API_BASE, opts) : io(opts);
     state.socket = socket;
 
@@ -3469,14 +3469,22 @@
         'stun:stun2.l.google.com:19302',
         'stun:stun3.l.google.com:19302',
         'stun:stun4.l.google.com:19302',
+        'stun:stun.1und1.de:3478',
+        'stun:stun.voiparound.com',
+        'stun:stun.voipstunt.com',
       ] },
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:turn.anyfirewall.com:4555', username: 'anyfirewall', credential: 'anyfirewall' },
-      { urls: 'turn:turnserver.asocialcore.com:3478', username: 'test', credential: 'test' },
+      { urls: [
+        'turns:turn.ctbg.xyz:443',
+        'turn:turn.ctbg.xyz:3478',
+        'turn:turn.ctbg.xyz:80',
+      ], username: 'free', credential: 'free' },
+      { urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ], username: 'openrelayproject', credential: 'openrelayproject' },
     ],
-    iceCandidatePoolSize: 6,
+    iceCandidatePoolSize: 8,
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
     iceTransportPolicy: 'all',
@@ -3589,6 +3597,9 @@
         state.socket.emit('call:ice', { toUserId: activeCall.peer.id, callId: activeCall.callId, candidate: c });
       }
     };
+    pc.onicecandidateerror = (e) => {
+      console.warn('ICE candidate error:', e.errorCode, e.errorText, e.url);
+    };
     pc.ontrack = (e) => {
       const rv = document.getElementById('call-remote');
       if (rv && e.streams && e.streams[0]) {
@@ -3597,26 +3608,35 @@
         if (rv.play) rv.play().catch(() => {});
       }
     };
+    pc.onnegotiationneeded = async () => {
+      if (!activeCall || activeCall.pc !== pc || !state.socket) return;
+      try {
+        await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
+        state.socket.emit('call:ice', { toUserId: activeCall.peer.id, callId: activeCall.callId, sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+      } catch (e) {}
+    };
     pc.onconnectionstatechange = () => {
       if (!activeCall || activeCall.pc !== pc) return;
       const st = pc.connectionState;
       if (st === 'connected') { clearTimeout(activeCall.dropTimer); onCallConnected(); }
       else if (st === 'failed') {
-        if (activeCall && activeCall.status === 'connected') {
-          try { pc.restartIce(); } catch (e) {}
-          clearTimeout(activeCall.dropTimer);
-          activeCall.dropTimer = setTimeout(() => {
-            if (activeCall && activeCall.pc && activeCall.pc.connectionState !== 'connected') hangUp('Connection lost', true);
-          }, 15000);
-        } else {
-          hangUp('Connection lost', false);
-        }
+        clearTimeout(activeCall.dropTimer);
+        activeCall.dropTimer = setTimeout(() => {
+          if (activeCall && activeCall.pc) {
+            if (activeCall.pc.connectionState === 'failed' || activeCall.pc.connectionState === 'disconnected') {
+              try { pc.restartIce(); } catch (e) {}
+            }
+            setTimeout(() => {
+              if (activeCall && activeCall.pc && activeCall.pc.connectionState !== 'connected') hangUp('Connection lost', true);
+            }, 15000);
+          }
+        }, 2000);
       }
       else if (st === 'disconnected') {
         clearTimeout(activeCall.dropTimer);
         activeCall.dropTimer = setTimeout(() => {
           if (activeCall && activeCall.pc && activeCall.pc.connectionState !== 'connected') hangUp('Connection lost', true);
-        }, 18000);
+        }, 25000);
       }
     };
     return pc;
@@ -3741,6 +3761,20 @@
 
   async function onCallRemoteIce(data) {
     if (!activeCall || !data || (data.callId && data.callId !== activeCall.callId)) return;
+    const sdp = data.sdp;
+    if (sdp) {
+      try {
+        await activeCall.pc.setRemoteDescription(sdp);
+        activeCall.remoteDescSet = true;
+        await flushPendingIce();
+        if (sdp.type === 'offer') {
+          const answer = await activeCall.pc.createAnswer();
+          await activeCall.pc.setLocalDescription(answer);
+          state.socket.emit('call:ice', { toUserId: activeCall.peer.id, callId: activeCall.callId, sdp: { type: answer.type, sdp: answer.sdp } });
+        }
+      } catch (e) {}
+      return;
+    }
     const cand = data.candidate;
     if (!cand) return;
     if (!activeCall.pc || !activeCall.remoteDescSet) { activeCall.pendingIce.push(cand); return; }
