@@ -5006,14 +5006,6 @@
           </div>
         </div>
         <div class="set-section">
-          <div class="set-label">🎂 Birthday <span class="set-hint">friends see a 🎂 on your day</span></div>
-          <div class="bday-row">
-            <select id="bd-m" class="bday-sel"><option value="">Month</option>${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((n, i) => `<option value="${String(i + 1).padStart(2, '0')}">${n}</option>`).join('')}</select>
-            <select id="bd-d" class="bday-sel"><option value="">Day</option>${Array.from({ length: 31 }, (_, i) => `<option value="${String(i + 1).padStart(2, '0')}">${i + 1}</option>`).join('')}</select>
-            <button class="btn-sm btn-soft" id="bd-clear">Clear</button>
-          </div>
-        </div>
-        <div class="set-section">
           <div class="set-label">Privacy</div>
           <div class="set-list">
             <button class="set-row" data-priv="hideLastSeen"><span class="set-main">${IC.eyeOff}<span>Hide last seen &amp; online</span></span><span class="set-toggle ${state.me && state.me.hideLastSeen ? 'on' : ''}"></span></button>
@@ -5033,23 +5025,6 @@
     document.body.appendChild(overlay);
     requestAnimationFrame(() => { overlay.classList.add('show'); overlay.querySelector('.settings-sheet').scrollTop = 0; });
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
-
-    // birthday picker — prefill from my profile, save when both parts are set
-    const bdM = overlay.querySelector('#bd-m');
-    const bdD = overlay.querySelector('#bd-d');
-    const myBday = (state.me && state.me.birthday) || '';
-    if (/^\d{2}-\d{2}$/.test(myBday)) { bdM.value = myBday.slice(0, 2); bdD.value = myBday.slice(3); }
-    const saveBday = async (bday) => {
-      try {
-        const r = await api('/api/me/birthday', { method: 'POST', body: { birthday: bday } });
-        if (r && r.me) Object.assign(state.me, r.me);
-        toast('🎂', bday ? 'Birthday saved' : 'Birthday cleared', bday ? 'Friends will celebrate with you!' : '');
-      } catch (err) { toast('⚠️', 'Error', 'Could not save birthday'); }
-    };
-    const onBdayChange = () => { if (bdM.value && bdD.value) saveBday(bdM.value + '-' + bdD.value); };
-    bdM.addEventListener('change', onBdayChange);
-    bdD.addEventListener('change', onBdayChange);
-    overlay.querySelector('#bd-clear').addEventListener('click', () => { bdM.value = ''; bdD.value = ''; saveBday(''); });
 
     overlay.addEventListener('click', async (e) => {
       if (e.target.closest('[data-starred]')) { close(); openStarred(); return; }
