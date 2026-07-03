@@ -129,12 +129,18 @@ _SHORTS_CHANNELS = [
     "UC3fbbyfFgvxhqkDgjVBfzSQ",  # We Bare Bears]
 ]
 
+MAX_REEL_SECONDS = 80    # keep only short clips ("reels")
+MAX_SEEDED_REELS = 250   # total new reels added per server start
+
+
 def _fetch_and_seed_shorts():
-    """Pull latest YouTube Shorts from channels and seed unseen ones as reels."""
+    """Pull the latest videos from the channels and seed the SHORT ones as
+    reels. Only newly-created reels count toward the cap, so every channel
+    keeps contributing across restarts instead of the first few hogging it."""
     ns = {"atom": "http://www.w3.org/2005/Atom"}
     seeded = 0
     for cid in _SHORTS_CHANNELS:
-        if seeded >= 250:
+        if seeded >= MAX_SEEDED_REELS:
             break
         try:
             resp = requests.get(
@@ -143,10 +149,11 @@ def _fetch_and_seed_shorts():
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TeaBot/1.0)"},
             )
             if resp.status_code != 200:
+                print(f"[reels] channel {cid}: HTTP {resp.status_code}")
                 continue
             root = ET.fromstring(resp.content)
             for entry in list(root.findall("atom:entry", ns)):
-                if seeded >= 50:
+                if seeded >= MAX_SEEDED_REELS:
                     break
                 link_el = entry.find("atom:link", ns)
                 href = (link_el.get("href") or "") if link_el is not None else ""
@@ -165,22 +172,23 @@ def _fetch_and_seed_shorts():
                 caption = (title_el.text or "")[:200] if title_el is not None else ""
                 embed = f"https://www.youtube.com/embed/{vid}?autoplay=1&mute=1&loop=1&playlist={vid}&rel=0&playsinline=1&controls=0&enablejsapi=1"
                 try:
+                    if db.reel_url_exists(embed):
+                        continue  # already seeded — doesn't count toward the cap
+                    # RSS lists uploads of ANY length; only seed actual shorts.
+                    # Unknown duration (scrape blocked) gets the benefit of the
+                    # doubt — the cleanup pass below prunes it later if long.
+                    secs = _yt_duration(vid)
+                    if secs is not None and secs > MAX_REEL_SECONDS:
+                        continue
                     db.ensure_reel_exists(embed, caption)
                     seeded += 1
-                except Exception:
+                except Exception as e:
+                    print(f"[reels] seed {vid} failed: {e}")
                     continue
-        except Exception:
+        except Exception as e:
+            print(f"[reels] channel {cid} failed: {e}")
             continue
-    print(f"[reels] seeded {seeded} videos from {len(_SHORTS_CHANNELS)} channels")
-
-
-# Seed fresh cartoon shorts. Existing reels are KEPT (deduped by URL in
-# ensure_reel_exists) so the feed never empties if a fetch returns few.
-_fetch_and_seed_shorts()
-
-# Background thread: delete auto-fetched reels >60s after server starts.
-
-MAX_REEL_SECONDS = 80   # keep only short clips ("reels")
+    print(f"[reels] seeded {seeded} new videos from {len(_SHORTS_CHANNELS)} channels")
 
 
 def _yt_duration(vid):
@@ -220,8 +228,17 @@ def _cleanup_long_reels():
     except Exception:
         pass
 
-threading.Thread(target=_cleanup_long_reels, daemon=True).start()
-print("[reels] background cleanup thread started")
+def _seed_then_cleanup():
+    """Seed fresh cartoon shorts, then prune long videos — all in the
+    background so server startup (and Render's health check) is never blocked
+    by dozens of slow YouTube fetches. Existing reels are KEPT (deduped by
+    URL) so the feed never empties if a fetch returns few."""
+    _fetch_and_seed_shorts()
+    _cleanup_long_reels()
+
+
+threading.Thread(target=_seed_then_cleanup, daemon=True).start()
+print("[reels] background seed + cleanup thread started")
 
 # Keep JWT_SECRET stable across restarts so logins persist forever (until the user
 # logs out). Prefer the env var; otherwise load — or generate once and store — it
@@ -543,6 +560,60 @@ def update_style():
     return jsonify(ok=True, me=me)
 
 
+_BDAY_RE = re.compile(r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
+# max day per month (Feb allows 29 so leap-day birthdays work; no year is stored)
+_DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+
+def _valid_bday(bday):
+    if not _BDAY_RE.match(bday):
+        return False
+    mm, dd = int(bday[:2]), int(bday[3:])
+    return 1 <= dd <= _DAYS_IN_MONTH[mm - 1]
+
+
+@app.post("/api/me/birthday")
+@auth_required
+def update_birthday():
+    """Set (or clear, with "") the user's birthday as "MM-DD" — no year, so
+    nobody's age is stored or shown."""
+    data = request.get_json(silent=True) or {}
+    bday = str(data.get("birthday") or "").strip()
+    if bday and not _valid_bday(bday):
+        return jsonify(error="That date doesn't exist."), 400
+    me = db.set_user_birthday(g.user["id"], bday)
+    if not me:
+        return jsonify(error="Not found"), 404
+    return jsonify(ok=True, me=me)
+
+
+@app.post("/api/messages/<int:mid>/star")
+@auth_required
+def star_message(mid):
+    meta = db.get_message_meta(mid)
+    if not meta:
+        return jsonify(error="Message not found."), 404
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    if not db.is_conversation_member(conv, g.user["id"]):
+        return jsonify(error="Message not found."), 404
+    starred = db.toggle_star(g.user["id"], mid)
+    if starred is None:
+        return jsonify(error="That message can't be starred."), 400
+    return jsonify(ok=True, starred=starred)
+
+
+@app.get("/api/starred")
+@auth_required
+def get_starred():
+    return jsonify(messages=db.list_starred(g.user["id"]))
+
+
+@app.get("/api/starred/ids")
+@auth_required
+def get_starred_ids():
+    return jsonify(ids=db.starred_ids(g.user["id"]))
+
+
 @app.post("/api/me/password")
 @auth_required
 def change_password():
@@ -733,10 +804,12 @@ def conversation_prefs(cid):
     data = request.get_json(silent=True) or {}
     pinned = data.get("pinned")
     muted = data.get("muted")
+    archived = data.get("archived")
     prefs = db.set_conversation_pref(
         me_id, cid,
         pinned=bool(pinned) if pinned is not None else None,
         muted=bool(muted) if muted is not None else None,
+        archived=bool(archived) if archived is not None else None,
     )
     return jsonify(ok=True, **prefs)
 
@@ -1185,8 +1258,11 @@ def create_reel_from_link():
 def get_reels():
     before = request.args.get("before", type=int)
     following = request.args.get("following") in ("1", "true")
-    reels = db.list_reels(g.user["id"], before_id=before, limit=10, following_only=following)
-    return jsonify(reels=reels, hasMore=len(reels) == 10)
+    # fetch one extra row so hasMore is exact (a page of exactly 10 used to
+    # report a phantom next page)
+    reels = db.list_reels(g.user["id"], before_id=before, limit=11, following_only=following)
+    has_more = len(reels) > 10
+    return jsonify(reels=reels[:10], hasMore=has_more)
 
 
 @app.post("/api/reels/<int:rid>/like")
@@ -1198,7 +1274,7 @@ def like_reel(rid):
 @app.post("/api/reels/<int:rid>/view")
 @auth_required
 def view_reel(rid):
-    return jsonify(views=db.increment_reel_views(rid))
+    return jsonify(views=db.increment_reel_views(rid, g.user["id"]))
 
 
 @app.get("/api/reels/<int:rid>/comments")
@@ -1531,7 +1607,15 @@ def on_message_send(payload):
     db.mark_read(conv["id"], uid, msg["id"])
 
     is_group = bool(conv.get("is_group"))
+    # a new message revives the chat: bump the 🔥 streak and un-archive it
+    streak = db.bump_streak(conv["id"], uid) if not is_group else None
+    try:
+        db.clear_conversation_archived(conv["id"])
+    except Exception:
+        pass
     envelope = {"message": msg, "conversationId": conv["id"], "isGroup": is_group, "sender": sender}
+    if streak is not None:
+        envelope["streak"] = streak
     if not is_group:
         recipient = db.get_user_by_id(db.conversation_partner_id(conv, uid))
         envelope["participants"] = {str(uid): sender, str(recipient["id"]): recipient} if recipient else {str(uid): sender}
@@ -1941,6 +2025,68 @@ def on_poll_vote(payload):
     if not updated:
         return {"error": "Could not update poll."}
     emit_conv(conv, "poll:update", {"messageId": mid, "conversationId": conv["id"], "poll": updated})
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Tic-Tac-Toe 🎮 — created as a message (like polls), moves update in-place
+# ---------------------------------------------------------------------------
+@socketio.on("game:create")
+def on_game_create(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    cid = int(payload.get("conversationId") or 0)
+    to_uid = int(payload.get("toUserId") or 0)
+    if cid:
+        conv = db.get_conversation_by_id(cid)
+    elif to_uid:
+        conv = db.get_or_create_conversation(uid, to_uid)
+    else:
+        return {"error": "No target."}
+    if not conv or not db.is_conversation_member(conv, uid):
+        return {"error": "Conversation not found."}
+    # 1-to-1: the peer is O right away. Groups: first challenger claims O.
+    opponent = None
+    if not conv.get("is_group"):
+        opponent = db.conversation_partner_id(conv, uid)
+    game = {"board": ["", "", "", "", "", "", "", "", ""],
+            "x": uid, "o": opponent, "turn": "x", "winner": None}
+    msg = db.create_message(conv["id"], uid, body=json.dumps(game), attachment_type="game")
+    sender = db.get_user_by_id(uid)
+    envelope = {"message": msg, "conversationId": conv["id"],
+                "isGroup": bool(conv.get("is_group")), "sender": sender}
+    if not conv.get("is_group"):
+        recipient = db.get_user_by_id(opponent) if opponent else None
+        envelope["participants"] = {str(uid): sender}
+        if recipient:
+            envelope["participants"][str(recipient["id"])] = recipient
+    emit_conv(conv, "message:new", envelope)
+    return {"ok": True, "message": msg}
+
+
+@socketio.on("game:move")
+def on_game_move(payload):
+    uid = sid_user.get(request.sid)
+    if not uid:
+        return {"error": "Not authenticated."}
+    payload = payload or {}
+    mid = int(payload.get("messageId") or 0)
+    try:
+        cell = int(payload.get("cell"))
+    except (TypeError, ValueError):
+        return {"error": "Bad move."}
+    meta = db.get_message_meta(mid)
+    if not meta:
+        return {"error": "Game not found."}
+    conv = db.get_conversation_by_id(meta["conversationId"])
+    if not conv or not db.is_conversation_member(conv, uid):
+        return {"error": "Conversation not found."}
+    updated = db.update_game_move(mid, uid, cell)
+    if isinstance(updated, str):
+        return {"error": updated}
+    emit_conv(conv, "game:update", {"messageId": mid, "conversationId": conv["id"], "game": updated})
     return {"ok": True}
 
 
