@@ -3742,11 +3742,8 @@
         'stun:stun.voiparound.com',
         'stun:stun.voipstunt.com',
       ] },
-      { urls: [
-        'turns:turn.ctbg.xyz:443',
-        'turn:turn.ctbg.xyz:3478',
-        'turn:turn.ctbg.xyz:80',
-      ], username: 'free', credential: 'free' },
+      // Best-effort relay used only until the server hands us its real ICE
+      // list (loadIceServers → /api/ice-servers, which uses Metered when set).
       { urls: [
         'turn:openrelay.metered.ca:80',
         'turn:openrelay.metered.ca:443',

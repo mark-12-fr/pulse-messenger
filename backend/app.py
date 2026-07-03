@@ -1931,37 +1931,71 @@ def get_pending_call():
 
 # ICE/TURN servers for WebRTC. A TURN relay lets calls connect even when both
 # users are behind strict NATs / mobile carriers (no direct peer-to-peer path).
-# Set TURN_URL / TURN_USERNAME / TURN_CREDENTIAL env vars to use a dedicated
-# relay; otherwise we hand out a free public relay (best-effort).
+#
+# Reliability order:
+#   1. Metered.ca — set METERED_APP + METERED_API_KEY (free 50GB/mo tier). The
+#      server fetches fresh, time-limited credentials so the API key never
+#      reaches the browser. THIS is the recommended way to make calls connect
+#      from any network.
+#   2. A dedicated relay via TURN_URL / TURN_USERNAME / TURN_CREDENTIAL.
+#   3. Best-effort free public relay (may be slow/unavailable).
 _TURN_URL = os.environ.get("TURN_URL", "").strip()
 _TURN_USER = os.environ.get("TURN_USERNAME", "").strip()
 _TURN_CRED = os.environ.get("TURN_CREDENTIAL", "").strip()
+_METERED_APP = os.environ.get("METERED_APP", "").strip()
+_METERED_KEY = os.environ.get("METERED_API_KEY", "").strip()
+
+_GOOGLE_STUN = {"urls": [
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:stun2.l.google.com:19302",
+    "stun:stun3.l.google.com:19302",
+]}
+_metered_cache = {"servers": None, "ts": 0.0}
+
+
+def _metered_ice():
+    """Fresh TURN credentials from Metered's free tier (cached ~30 min so we
+    don't hammer their API). Returns a list of iceServer dicts or None."""
+    if not (_METERED_APP and _METERED_KEY):
+        return None
+    now = time.time()
+    if _metered_cache["servers"] and now - _metered_cache["ts"] < 1800:
+        return _metered_cache["servers"]
+    try:
+        resp = requests.get(
+            f"https://{_METERED_APP}.metered.live/api/v1/turn/credentials",
+            params={"apiKey": _METERED_KEY}, timeout=6,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, list) and data:
+                _metered_cache["servers"] = data
+                _metered_cache["ts"] = now
+                return data
+        else:
+            print(f"[ice] metered returned HTTP {resp.status_code}")
+    except Exception as e:
+        print(f"[ice] metered fetch failed: {e}")
+    return _metered_cache["servers"]  # a slightly stale list beats none
 
 
 def _ice_servers():
-    servers = [{
-        "urls": [
-            "stun:stun.l.google.com:19302",
-            "stun:stun1.l.google.com:19302",
-            "stun:stun2.l.google.com:19302",
-            "stun:stun3.l.google.com:19302",
-        ],
-    }]
+    # 1) Metered.ca (free tier) — its list already bundles STUN + TURN on
+    #    80/443/tcp/tls, which is what punches through strict networks.
+    metered = _metered_ice()
+    if metered:
+        return [_GOOGLE_STUN] + metered
+    # 2) a dedicated static relay
     if _TURN_URL and _TURN_USER and _TURN_CRED:
-        # Allow several comma-separated TURN URLs under one credential.
         urls = [u.strip() for u in _TURN_URL.split(",") if u.strip()]
-        servers.append({"urls": urls, "username": _TURN_USER, "credential": _TURN_CRED})
-    else:
-        fallbacks = [
-            ("turns:turn.ctbg.xyz:443", "free", "free"),
-            ("turn:turn.ctbg.xyz:3478", "free", "free"),
-            ("turn:turn.ctbg.xyz:80", "free", "free"),
-            ("turn:openrelay.metered.ca:80", "openrelayproject", "openrelayproject"),
-            ("turn:openrelay.metered.ca:443", "openrelayproject", "openrelayproject"),
-            ("turn:openrelay.metered.ca:443?transport=tcp", "openrelayproject", "openrelayproject"),
-        ]
-        for url, user, cred in fallbacks:
-            servers.append({"urls": url, "username": user, "credential": cred})
+        return [_GOOGLE_STUN, {"urls": urls, "username": _TURN_USER, "credential": _TURN_CRED}]
+    # 3) best-effort free public relay (Open Relay)
+    servers = [_GOOGLE_STUN]
+    for url in ("turn:openrelay.metered.ca:80",
+                "turn:openrelay.metered.ca:443",
+                "turn:openrelay.metered.ca:443?transport=tcp"):
+        servers.append({"urls": url, "username": "openrelayproject", "credential": "openrelayproject"})
     return servers
 
 
