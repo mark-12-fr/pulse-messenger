@@ -155,11 +155,45 @@
       headers['Content-Type'] = 'application/json';
       payload = JSON.stringify(body);
     }
-    const res = await fetch(API_BASE + path, { method, headers, body: payload });
+    let res;
+    try {
+      res = await fetch(API_BASE + path, { method, headers, body: payload });
+    } catch (netErr) {
+      // fetch rejects when the connection can't be made — typically the Render
+      // free tier still cold-starting from sleep. Tag it so callers can wait
+      // and retry instead of treating it as a hard failure.
+      const e = new Error('Server is waking up — please try again.');
+      e.coldStart = true;
+      throw e;
+    }
+    // 502/503/504 come back from the platform while the app is still booting.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      const e = new Error('Server is waking up — please try again.');
+      e.coldStart = true;
+      throw e;
+    }
     let data = null;
     try { data = await res.json(); } catch { /* no body */ }
     if (!res.ok) throw new Error((data && data.error) || 'Something went wrong.');
     return data;
+  }
+
+  // Ping the health endpoint until the backend answers. Render's free tier can
+  // take ~30-60s to wake from sleep, so we poll patiently. Resolves true once
+  // it's up, false on timeout.
+  async function waitForServer(maxMs = 90000) {
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 8000);
+        const res = await fetch(API_BASE + '/api/health', { cache: 'no-store', signal: ctrl.signal });
+        clearTimeout(t);
+        if (res.ok) return true;
+      } catch (e) { /* still asleep */ }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    return false;
   }
 
   // ============================================================
@@ -200,12 +234,22 @@
     const submit = $('#auth-submit');
     submit.disabled = true;
 
+    const doAuth = () => mode === 'register'
+      ? api('/api/register', { method: 'POST', body: { username, displayName, password } })
+      : api('/api/login', { method: 'POST', body: { username, password } });
+
     try {
       let data;
-      if (mode === 'register') {
-        data = await api('/api/register', { method: 'POST', body: { username, displayName, password } });
-      } else {
-        data = await api('/api/login', { method: 'POST', body: { username, password } });
+      try {
+        data = await doAuth();
+      } catch (err) {
+        // Server asleep (Render free tier)? Wait for it to wake, then retry
+        // once so the user doesn't have to tap Log in again.
+        if (!err || !err.coldStart) throw err;
+        showAuthMsg('Waking the server… this can take up to a minute.', 'info');
+        const up = await waitForServer();
+        if (!up) throw new Error('Server is taking longer than usual — please try again.');
+        data = await doAuth();
       }
       state.token = data.token;
       localStorage.setItem('pulse_token', data.token);
@@ -5073,12 +5117,30 @@
   // ============================================================
   // BOOT
   // ============================================================
+  // Show/clear a small caption under the splash ring (e.g. while the free-tier
+  // backend is waking up) so a slow start doesn't look frozen.
+  function setSplashNote(text) {
+    const splash = $('#splash');
+    if (!splash) return;
+    let note = splash.querySelector('.splash-note');
+    if (!text) { if (note) note.remove(); return; }
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'splash-note';
+      splash.appendChild(note);
+    }
+    note.textContent = text;
+  }
+
   async function boot() {
     setAuthMode('login');
     // Wake the backend early (Render free tier sleeps) so login feels instant.
     try { fetch(API_BASE + '/api/health', { cache: 'no-store' }).catch(() => {}); } catch (e) {}
     if (!state.token) return; // show auth screen
-    for (let attempt = 0; attempt < 5; attempt++) {
+    // Returning user: wait out a possible cold start rather than giving up
+    // after a few seconds. Keep the splash up and auto-enter once /api/me
+    // succeeds; only reveal the login screen if the server never comes back.
+    for (let attempt = 0; attempt < 45; attempt++) {
       try {
         const { user } = await api('/api/me');
         state.me = user;
@@ -5088,10 +5150,12 @@
         // Only sign out if the token is genuinely invalid — never on a network
         // or cold-start error, so the user stays logged in across restarts.
         if (/not authenticated/i.test(String((err && err.message) || ''))) { logout(); return; }
-        await new Promise((r) => setTimeout(r, 1500));
+        setSplashNote(attempt >= 1 ? 'Waking the server…' : '');
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
-    showAuthMsg('Server is waking up — please try again.', 'error');
+    showAuthMsg('Server is taking longer than usual — please try again in a moment.', 'error');
+    setSplashNote('');
     document.documentElement.classList.remove('resume');
     $('#splash').classList.add('hidden');
   }
