@@ -1152,6 +1152,11 @@ html.resume #auth-screen { display: none; }
   border: 3px solid var(--line); border-top-color: var(--accent);
   animation: spin .8s linear infinite;
 }
+.splash-note {
+  font-size: 14px; font-weight: 600; color: var(--text-soft);
+  text-align: center; max-width: 260px; padding: 0 20px;
+  animation: fadeUp .4s var(--ease) both;
+}
 
 /* entrance choreography when you land in the app after login */
 .app-screen:not(.hidden) .sidebar { animation: slideInLeft .5s var(--ease) both; }
