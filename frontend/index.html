@@ -30,12 +30,35 @@
     })();
   </script>
 
+  <!-- ============================================================
+       MAINTENANCE MODE
+       While this is `true`, everyone who opens the app sees a
+       professional maintenance notice instead of the login screen.
+       👉 To bring the app back online, change `true` to `false` below
+          (or delete this whole <script> block) and redeploy.
+       ============================================================ -->
+  <script>
+    window.__MAINTENANCE__ = true;
+    if (window.__MAINTENANCE__) document.documentElement.classList.add('maintenance');
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260703c" />
+  <link rel="stylesheet" href="/styles.css?v=20260703d" />
 </head>
 <body>
+
+  <!-- Maintenance notice — shown full-screen only while __MAINTENANCE__ is true -->
+  <div class="maintenance-screen" id="maintenance-screen" role="alert" aria-live="polite">
+    <div class="maintenance-card">
+      <div class="maintenance-logo">🍵</div>
+      <h1>We&rsquo;ll be right back</h1>
+      <p class="maintenance-lead">Tea is temporarily offline for scheduled maintenance and improvements.</p>
+      <p class="maintenance-sub">Our team is hard at work making things better. Please check back next month. Thank you for your patience and support.</p>
+      <div class="maintenance-sign">&mdash; The Tea Team</div>
+    </div>
+  </div>
 
   <!-- splash shown while resuming a saved session (no login-page flash) -->
   <div id="splash" class="splash">
@@ -297,6 +320,6 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <script src="/config.js"></script>
-  <script src="/app.js?v=20260703c"></script>
+  <script src="/app.js?v=20260703d"></script>
 </body>
 </html>

@@ -4,6 +4,10 @@
 (function () {
   'use strict';
 
+  // Maintenance mode (set in index.html <head>): show only the notice and do
+  // no work — no network calls, no splash, no listeners.
+  if (window.__MAINTENANCE__) return;
+
   // ---------- backend location ----------
   // "" means same-origin (local dev). In production config.js sets the Render URL.
   const API_BASE = ((window.PULSE_CONFIG && window.PULSE_CONFIG.backendUrl) || '').replace(/\/$/, '');
