@@ -137,12 +137,14 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
   content: "";
   position: absolute;
   border-radius: 50%;
-  filter: blur(8px);
-  opacity: .5;
   pointer-events: none;
 }
-.auth-screen::before { width: 320px; height: 320px; background: rgba(255,255,255,.18); top: -120px; right: -80px; animation: float1 12s ease-in-out infinite; }
-.auth-screen::after { width: 260px; height: 260px; background: rgba(120,80,255,.35); bottom: -120px; left: -70px; animation: float2 14s ease-in-out infinite; }
+.auth-screen::before { width: 500px; height: 500px; background: rgba(255,255,255,.12); top: -180px; right: -140px; filter: blur(60px); animation: float1 14s ease-in-out infinite; }
+.auth-screen::after { width: 400px; height: 400px; background: rgba(120,80,255,.2); bottom: -150px; left: -120px; filter: blur(80px); animation: float2 16s ease-in-out infinite; }
+.auth-screen::before,
+.auth-screen::after {
+  opacity: .6;
+}
 
 .auth-card {
   position: relative;
