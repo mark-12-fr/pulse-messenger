@@ -9,5 +9,5 @@
         backendUrl: "https://pulse-messenger-api.onrender.com"
    ============================================================ */
 window.PULSE_CONFIG = {
-  backendUrl: "https://teaa-9pdp.onrender.com"
+  backendUrl: "https://pulse-messenger-production-e86b.up.railway.app"
 };
