@@ -1259,6 +1259,37 @@
     }
   }
 
+  // Tap the companion pet → info card with stage, streak & next evolution.
+  function openPetInfo() {
+    const conv = state.current ? state.conversations.get(state.current.conversationId) : null;
+    if (!conv || conv.isGroup || conv.streak < 2) return;
+    const pet = streakPet(conv.streak);
+    const next = (() => {
+      for (const t of [5, 10, 20, 30, 60, 100]) if (conv.streak < t) return { pet: streakPet(t), need: t };
+      return null;
+    })();
+    const nextHtml = next
+      ? `<div class="pet-next"><span class="pet-next-svg">${next.pet.svg}</span><span>Next: <b>${next.pet.name}</b> at <b>${next.need}</b> days</span></div>`
+      : `<div class="pet-next maxed">Max stage reached — keep it alive daily! 🏆</div>`;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal pet-info-modal';
+    overlay.innerHTML = `
+      <div class="modal-card pet-info-card">
+        <span class="pet-info-big ${pet.cl}">${pet.svg}</span>
+        <h3>${pet.name}</h3>
+        <div class="pet-info-streak"><span class="streak-badge">${IC.flame}${conv.streak}</span> <span class="pet-info-days">day streak</span></div>
+        <p class="pet-info-text">Message each other every day to keep your pet growing. Skip a day and it resets!</p>
+        ${nextHtml}
+        <div class="modal-actions">
+          <button class="btn-soft" data-cancel="1">Close</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-cancel]')) close(); });
+  }
+
   function updatePeerBadges() {
     renderChatPet();
     const nameEl = $('#peer-name');
@@ -2645,6 +2676,10 @@
   // ============================================================
   // LIGHTBOX
   // ============================================================
+  $('#chat-pet').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openPetInfo();
+  });
   $('#messages').addEventListener('click', (e) => {
     // selection mode: a tap toggles the message
     if (state.selecting) {
