@@ -742,16 +742,16 @@
       nextUnread.set(c.id, c.unread || 0);
       const bump = c.unread && prevUnread.get(c.id) !== c.unread;
       const pet = (!isG && c.streak >= 2) ? streakPet(c.streak) : null;
-      const streak = pet ? `<span class="streak-pet ${pet.cl}" title="${pet.name} — ${c.streak}-day streak!">${pet.emoji}</span>` : '';
-      const streakNum = (!isG && c.streak >= 2) ? `<span class="streak-badge">🔥${c.streak}</span>` : '';
-      const bday = (!isG && isBdayToday(friend)) ? '<span class="bday-badge">🎂</span>' : '';
+      const streak = pet ? `<span class="streak-pet ${pet.cl}" title="${pet.name} — ${c.streak}-day streak!">${pet.svg}</span>` : '';
+      const streakNum = (!isG && c.streak >= 2) ? `<span class="streak-badge">${IC.flame}${c.streak}</span>` : '';
+      const bday = (!isG && isBdayToday(friend)) ? '<span class="bday-badge">' + IC.cake + '</span>' : '';
       return `
         <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" style="--i:${Math.min(i, 12)}" data-open-conv="${c.id}" data-peer="${isG ? '' : friend.id}" data-group="${isG ? '1' : ''}">
-          ${isG ? `<span class="av-wrap">${avatarHtml(au, dotOpt)}<span class="grp-badge">👥</span></span>` : avatarHtml(au, dotOpt)}
+          ${isG ? `<span class="av-wrap">${avatarHtml(au, dotOpt)}<span class="grp-badge">${IC.group}</span></span>` : avatarHtml(au, dotOpt)}
           <div class="row-main">
             <div class="row-top">
-              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(convTitle(c))}${pet ? `<span class="row-pet">${streak}</span>` : ''}${streakNum}${bday}</span>
-              <span class="row-time">${c.muted ? '<span class="row-mute">🔕</span>' : ''}${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
+              <span class="row-name">${c.pinned ? '<span class="row-pin">' + IC.pin + '</span>' : ''}${escapeHtml(convTitle(c))}${pet ? `<span class="row-pet">${streak}</span>` : ''}${streakNum}${bday}</span>
+              <span class="row-time">${c.muted ? '<span class="row-mute">' + IC.muted + '</span>' : ''}${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
             </div>
             <div class="row-top">
               <span class="row-sub">${escapeHtml(previewText(c.lastMessage, c))}</span>
@@ -764,7 +764,7 @@
     const firstLoad = !!box.querySelector('.sk-row');
     let html = convs.map(rowHtml).join('');
     if (archived.length) {
-      html += `<button class="arch-toggle ${state.showArchived ? 'open' : ''}" data-arch-toggle>📦 Archived <span class="arch-n">${archived.length}</span><span class="arch-chev">›</span></button>`;
+      html += `<button class="arch-toggle ${state.showArchived ? 'open' : ''}" data-arch-toggle>${IC.archive} Archived <span class="arch-n">${archived.length}</span><span class="arch-chev">›</span></button>`;
       if (state.showArchived) html += archived.map(rowHtml).join('');
     }
     if (!convs.length && !archived.length) {
@@ -793,7 +793,7 @@
       <div class="row" data-open-conv="${f.conversationId}" data-peer="${f.id}">
         ${avatarHtml(f, { dot: !!f.online })}
         <div class="row-main">
-          <div class="row-name">${escapeHtml(friendName(f))}${isBdayToday(f) ? '<span class="bday-badge">🎂</span>' : ''}</div>
+          <div class="row-name">${escapeHtml(friendName(f))}${isBdayToday(f) ? '<span class="bday-badge">' + IC.cake + '</span>' : ''}</div>
           <div class="row-sub">${f.online ? 'Online' : 'Offline'}</div>
         </div>
       </div>`
@@ -1218,16 +1218,28 @@
     updatePeerBadges();
   }
 
+  // Hand-drawn SVG streak pets — clean, professional companion that evolves
+  // as the 🔥 streak grows. Drawn on a 24x24 grid with a consistent outline
+  // style so every stage reads as part of one family.
+  const PET_SVGS = {
+    baby: '<svg viewBox="0 0 24 24" width="17" height="17"><g fill="none" stroke="#6b5520" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="8.3" fill="#FFD23F"/><path d="M10.1 11.5h.01M13.9 11.5h.01" stroke-width="2.4"/><path d="M12 13.8v2.7l1.8-1.4Z" fill="#FF8A00" stroke="none"/><path d="M8.8 19.6h2M13.2 19.6h2" stroke-width="1.5"/></g></svg>',
+    chick: '<svg viewBox="0 0 24 24" width="18" height="18"><g fill="none" stroke="#6b5520" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="14.2" r="7.6" fill="#FFD23F"/><path d="M9.6 7.2c.2-1.8-.3-3-1.2-3.8M12 6.6V2.6M14.4 7.2c-.2-1.8.3-3 1.2-3.8" stroke-width="1.5"/><path d="M6.6 12.6c-2.4-.9-3.7-2.5-3.7-4.5 2.4-.4 3.8 1.1 3.7 4.5ZM17.4 12.6c2.4-.9 3.7-2.5 3.7-4.5-2.4-.4-3.8 1.1-3.7 4.5Z" fill="#FFD23F"/><path d="M10.1 12.6h.01M13.9 12.6h.01" stroke-width="2.4"/><path d="M12 14.8v2.7l1.8-1.4Z" fill="#FF8A00" stroke="none"/><path d="M8.8 20.4h2M13.2 20.4h2" stroke-width="1.5"/></g></svg>',
+    bunny: '<svg viewBox="0 0 24 24" width="19" height="19"><g fill="none" stroke="#8f8fa6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.2 4a1.9 1.9 0 0 1 3.8 0v4H8.2z" fill="#fff"/><path d="M14 4a1.9 1.9 0 0 1 3.8 0v4H14z" fill="#fff"/><path d="M9.4 4.9a.8.8 0 0 1 1.6 0v2.3h-1.6z" fill="#FFD9E2" stroke="none"/><path d="M15.2 4.9a.8.8 0 0 1 1.6 0v2.3h-1.6z" fill="#FFD9E2" stroke="none"/><circle cx="12" cy="14.8" r="6.4" fill="#fff"/><path d="M9.2 12.2h.01M14.8 12.2h.01" stroke-width="2.3"/><path d="M11.3 15.4l.7 1.4.7-1.4Z" fill="#FF9FB0" stroke="none"/></g></svg>',
+    fox: '<svg viewBox="0 0 24 24" width="20" height="20"><g fill="none" stroke="#7a4a1d" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5 4.5 9 7 3.8l3.6 2.2h2.8L17 3.8l2.5 5.2Z" fill="#FF8A3D"/><path d="M12 21.5l-2.6-6.3a3.2 3.2 0 0 1 5.2 0Z" fill="#fff"/><path d="M10.1 12.4h.01M13.9 12.4h.01" stroke-width="2.3"/><path d="M11.2 15l.8 1.5.8-1.5Z" fill="#2b1a0e" stroke="none"/></g></svg>',
+    panda: '<svg viewBox="0 0 24 24" width="20" height="20"><g fill="none" stroke="#5c5c70" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="14.8" r="7" fill="#fff"/><circle cx="7.8" cy="8.6" r="2.3" fill="#26282e"/><circle cx="16.2" cy="8.6" r="2.3" fill="#26282e"/><path d="M12 14.8a2.6 2.6 0 0 0-2.1 2.5 2.6 2.6 0 0 0 4.2 0A2.6 2.6 0 0 0 12 14.8Z" fill="#26282e"/><circle cx="10.2" cy="13" r="1" fill="#26282e"/><path d="M11.6 15.2l.4.8.4-.8Z" fill="#26282e" stroke="none"/></g></svg>',
+    unicorn: '<svg viewBox="0 0 24 24" width="21" height="21"><g fill="none" stroke="#8f7ac0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.6 21v-4.6c0-3.2 2.4-5.6 5.4-5.6 3 0 5.4 2.4 5.4 5.6V21Z" fill="#fff"/><path d="M9.1 8.4c-2.3.2-3.7-1.4-3.9-3.6 2.3.3 3.6 1.5 3.9 3.6ZM14.9 8.4c2.3.2 3.7-1.4 3.9-3.6-2.3.3-3.6 1.5-3.9 3.6Z" fill="#FFD9E2" stroke="none"/><path d="M12 11.4V7" stroke-width="2"/><path d="M12 7 10.1 1.6h3.8Z" fill="#FFD23F" stroke="none"/><path d="M10.1 17.4h.01M13.9 17.4h.01" stroke-width="2.2"/><path d="M11.3 19l.7 1.3.7-1.3Z" fill="#FF9FB0" stroke="none"/></g></svg>',
+    dragon: '<svg viewBox="0 0 24 24" width="22" height="22"><g fill="none" stroke="#2e7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.1 9.6c-.7-2.2.4-4.4 2.5-5.4M15.9 9.6c.7-2.2-.4-4.4-2.5-5.4" stroke-width="1.5"/><circle cx="12" cy="14.8" r="6.3" fill="#56C271"/><path d="M7.6 13c-2.3-.9-3.8-2.5-4.2-4.7 2.2-.6 3.9.6 4.2 2.7-.1.8-.1 1.4 0 2ZM16.4 13c2.3-.9 3.8-2.5 4.2-4.7-2.2-.6-3.9.6-4.2 2.7.1.8.1 1.4 0 2Z" fill="#56C271"/><path d="M10.1 12.6h.01M13.9 12.6h.01" stroke-width="2.2"/><path d="M12 14.8v2.6l1.7-1.4Z" fill="#FF7A00" stroke="none"/><path d="M17.6 12.2c1.8 1 2.8 2.4 3.1 4.1-.5.5-1.1.7-1.6.5-.3-1.3-1-2.3-1.5-3.2Z" fill="#FF9E45"/></g></svg>',
+  };
   // Little chips next to the chat-header name: 🔥 streak and 🎂 birthday.
   // Streak pets (TikTok-style): the pet evolves as the 🔥 streak grows.
   function streakPet(n) {
-    if (n >= 100) return { emoji: '🐲', name: 'Legendary Dragon', cl: 'pet-legend' };
-    if (n >= 60) return { emoji: '🦄', name: 'Magical Unicorn', cl: 'pet-epic' };
-    if (n >= 30) return { emoji: '🐼', name: 'Mighty Panda', cl: 'pet-mighty' };
-    if (n >= 20) return { emoji: '🦊', name: 'Clever Fox', cl: 'pet-clever' };
-    if (n >= 10) return { emoji: '🐰', name: 'Energetic Bunny', cl: 'pet-bunny' };
-    if (n >= 5) return { emoji: '🐤', name: 'Happy Chick', cl: 'pet-chick' };
-    return { emoji: '🐣', name: 'Baby Chick', cl: 'pet-baby' };
+    if (n >= 100) return { svg: PET_SVGS.dragon, name: 'Legendary Dragon', cl: 'pet-legend' };
+    if (n >= 60) return { svg: PET_SVGS.unicorn, name: 'Magical Unicorn', cl: 'pet-epic' };
+    if (n >= 30) return { svg: PET_SVGS.panda, name: 'Mighty Panda', cl: 'pet-mighty' };
+    if (n >= 20) return { svg: PET_SVGS.fox, name: 'Clever Fox', cl: 'pet-clever' };
+    if (n >= 10) return { svg: PET_SVGS.bunny, name: 'Energetic Bunny', cl: 'pet-bunny' };
+    if (n >= 5) return { svg: PET_SVGS.chick, name: 'Happy Chick', cl: 'pet-chick' };
+    return { svg: PET_SVGS.baby, name: 'Baby Chick', cl: 'pet-baby' };
   }
   function updatePeerBadges() {
     const nameEl = $('#peer-name');
@@ -1237,10 +1249,10 @@
     const bits = [];
     if (conv && !conv.isGroup && conv.streak >= 2) {
       const pet = streakPet(conv.streak);
-      bits.push(`<span class="streak-pet ${pet.cl}" title="${pet.name} — ${conv.streak}-day streak! Keep chatting daily to raise your pet 🪺">${pet.emoji}</span>`);
-      bits.push(`<span class="streak-badge" title="Chat streak — message each other daily to keep it!">🔥${conv.streak}</span>`);
+      bits.push(`<span class="streak-pet ${pet.cl}" title="${pet.name} — ${conv.streak}-day streak! Keep chatting daily to grow your pet">${pet.svg}</span>`);
+      bits.push(`<span class="streak-badge" title="Chat streak — message each other daily to keep it!">${IC.flame}${conv.streak}</span>`);
     }
-    if (peer && isBdayToday(peer)) bits.push('<span class="bday-badge" title="Birthday today!">🎂</span>');
+    if (peer && isBdayToday(peer)) bits.push('<span class="bday-badge" title="Birthday today!">' + IC.cake + '</span>');
     let b = document.getElementById('peer-badges');
     if (!bits.length) { if (b) b.remove(); return; }
     if (!b) {
@@ -4890,6 +4902,10 @@
     trash: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
     muted: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m23 9-6 6M17 9l6 6"/></svg>',
     speaker: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M18 8a5 5 0 0 1 0 8M21 5a9 9 0 0 1 0 14"/></svg>',
+    flame: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c4.5 0 7.5-3 7.5-7 0-3.1-2-5.2-3.7-7-.8-.8-1.5-2.2-1.5-4-2.3 1.2-3.8 3.2-4.2 5.7-.7-.9-1.4-1.6-2.1-2.2.1 2.6-1 5-3 6.9C4.6 15.9 6 22 12 22Z"/><path d="M12 22c-2 0-3.4-1.4-3.4-3.2 0-2 2-3.2 3.4-4.8 1.4 1.6 3.4 2.8 3.4 4.8 0 1.8-1.4 3.2-3.4 3.2Z"/></svg>',
+    cake: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18v-5H3v5ZM3 16h18v-4H3v4Z"/><path d="M5 12V9M8 12V7M11 12V8M14 12V9M17 12V8M20 12V10" stroke-width="1.3"/><circle cx="5" cy="19.2" r=".7" fill="currentColor" stroke="none"/><circle cx="12" cy="19.2" r=".7" fill="currentColor" stroke="none"/><circle cx="19" cy="19.2" r=".7" fill="currentColor" stroke="none"/></svg>',
+    group: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><circle cx="9" cy="8" r="3.6"/><path d="M2.7 20a6.3 6.3 0 0 1 12.6 0"/><path d="M16.5 4.9a3.6 3.6 0 0 1 0 6.2"/><path d="M17.6 14.6a6.3 6.3 0 0 1 3.7 5.4"/></svg>',
+    archive: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v4H3zM4 11v9h16v-9M9.5 15h5"/></svg>',
   };
   function applyAccent(id) {
     const a = ACCENTS.find((x) => x.id === id) || ACCENTS[0];

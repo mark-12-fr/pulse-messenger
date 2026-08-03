@@ -395,8 +395,10 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
   box-shadow: 0 2px 8px rgba(10, 124, 255, .35);
 }
 .row-badge.muted { background: var(--text-faint); box-shadow: none; }
-.row-pin { font-size: 11px; margin-right: 3px; opacity: .8; }
-.row-mute { font-size: 11px; margin-right: 3px; opacity: .7; }
+.row-pin { display: inline-flex; align-items: center; margin-right: 3px; opacity: .75; }
+.row-pin svg { width: 12px; height: 12px; }
+.row-mute { display: inline-flex; align-items: center; margin-right: 3px; opacity: .7; }
+.row-mute svg { width: 13px; height: 13px; }
 .row.pinned { background: linear-gradient(90deg, var(--active), transparent 70%); }
 .av-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
 .grp-badge {
@@ -404,8 +406,9 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
   width: 19px; height: 19px; border-radius: 50%;
   background: var(--panel); border: 2px solid var(--panel);
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
 }
+.grp-badge svg { width: 12px; height: 12px; color: var(--accent); }
 .grp-sender { display: block; font-size: 12px; font-weight: 700; margin-bottom: 2px; }
 
 .row-actions { display: flex; gap: 8px; }
@@ -1317,32 +1320,47 @@ html.theme-anim * { transition: background-color .5s var(--ease), color .45s var
 
 /* ===================== streak 🔥 · birthday 🎂 badges ===================== */
 .streak-badge {
-  display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 800;
-  color: #ff8a00; animation: flameFlicker 1.6s ease-in-out infinite;
+  display: inline-flex; align-items: center; gap: 2px; margin-left: 6px;
+  font-size: 12px; font-weight: 800; color: #ff8a00;
+  animation: flameFlicker 1.8s ease-in-out infinite;
 }
-@keyframes flameFlicker { 0%, 100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.12); filter: brightness(1.25); } }
-.bday-badge { display: inline-block; margin-left: 6px; font-size: 13px; animation: floatY 2.4s ease-in-out infinite; }
+.streak-badge svg { width: 13px; height: 13px; }
+@keyframes flameFlicker { 0%, 100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.08); filter: brightness(1.2); } }
+.bday-badge { display: inline-flex; align-items: center; margin-left: 6px; animation: floatY 2.4s ease-in-out infinite; }
+.bday-badge svg { width: 13px; height: 13px; }
 #peer-badges { margin-left: 7px; }
 #peer-badges .streak-badge, #peer-badges .bday-badge { margin-left: 4px; vertical-align: 1px; }
 
-/* streak pets 🐣 — evolve with the 🔥 streak (TikTok-style) */
+/* streak pets — hand-drawn SVG companions that evolve with the 🔥 streak */
 .streak-pet {
-  display: inline-block; margin-left: 6px; font-size: 15px; line-height: 1;
-  animation: petBounce 2s ease-in-out infinite; cursor: help;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .25));
+  display: inline-flex; align-items: center; margin-left: 6px; line-height: 1;
+  cursor: help; vertical-align: -3px;
+  animation: petFloat 3.4s cubic-bezier(.45, 0, .55, 1) infinite;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .28));
+  transition: transform .35s cubic-bezier(.34, 1.56, .64, 1), filter .35s ease;
 }
-.streak-pet:hover { transform: scale(1.25); }
-.pet-baby { font-size: 13px; animation: petBounce 2.6s ease-in-out infinite; opacity: .9; }
-.pet-chick { font-size: 14px; animation: petBounce 2.4s ease-in-out infinite; }
-.pet-bunny { font-size: 15px; animation: petBounce 2.2s ease-in-out infinite, petWiggle 1.4s ease-in-out 1s infinite; }
-.pet-clever { font-size: 16px; animation: petBounce 2s ease-in-out infinite; filter: drop-shadow(0 2px 6px rgba(255, 140, 0, .4)); }
-.pet-mighty { font-size: 17px; animation: petBounce 1.9s ease-in-out infinite; filter: drop-shadow(0 2px 8px rgba(120, 80, 255, .5)); }
-.pet-epic { font-size: 18px; animation: petBounce 1.8s ease-in-out infinite, petGlow 1.6s ease-in-out infinite; }
-.pet-legend { font-size: 20px; animation: petBounce 1.6s ease-in-out infinite, petGlow 1.2s ease-in-out infinite; }
-@keyframes petBounce { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-4px); } 70% { transform: translateY(-1px); } }
-@keyframes petWiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
-@keyframes petGlow { 0%, 100% { filter: drop-shadow(0 0 4px rgba(255, 200, 0, .7)); } 50% { filter: drop-shadow(0 0 12px rgba(255, 200, 0, 1)); } }
-.row-pet { display: inline-flex; margin-left: 6px; }
+.streak-pet svg { display: block; transition: transform .35s cubic-bezier(.34, 1.56, .64, 1); }
+.streak-pet:hover { animation-play-state: paused; transform: scale(1.2); filter: drop-shadow(0 3px 10px rgba(0, 0, 0, .35)); }
+.streak-pet:hover svg { transform: rotate(-8deg); }
+.pet-baby { animation-duration: 3.6s; opacity: .92; }
+.pet-chick { animation-duration: 3.4s; }
+.pet-bunny { animation-duration: 3.2s, 2.8s; animation-name: petFloat, petWiggle; }
+.pet-clever { animation-duration: 3s; filter: drop-shadow(0 2px 6px rgba(255, 140, 0, .45)); }
+.pet-mighty { animation-duration: 2.9s; filter: drop-shadow(0 2px 8px rgba(120, 80, 255, .55)); }
+.pet-epic { animation-duration: 2.8s, 2.4s; animation-name: petFloat, petGlow; }
+.pet-legend { animation-duration: 2.6s, 1.8s; animation-name: petFloat, petGlow; }
+@keyframes petFloat {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  35% { transform: translateY(-2.6px) rotate(-2.5deg); }
+  70% { transform: translateY(0) rotate(0deg); }
+  85% { transform: translateY(-1.2px) rotate(2deg); }
+}
+@keyframes petWiggle { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+@keyframes petGlow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(255, 200, 0, .65)) drop-shadow(0 2px 8px rgba(120, 80, 255, .5)); }
+  50% { filter: drop-shadow(0 0 13px rgba(255, 200, 0, .95)) drop-shadow(0 2px 8px rgba(120, 80, 255, .5)); }
+}
+.row-pet { display: inline-flex; margin-left: 6px; vertical-align: -3px; }
 
 /* birthday picker in Settings */
 .bday-row { display: flex; gap: 8px; align-items: center; }
