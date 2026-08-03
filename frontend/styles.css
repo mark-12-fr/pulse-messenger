@@ -1325,6 +1325,25 @@ html.theme-anim * { transition: background-color .5s var(--ease), color .45s var
 #peer-badges { margin-left: 7px; }
 #peer-badges .streak-badge, #peer-badges .bday-badge { margin-left: 4px; vertical-align: 1px; }
 
+/* streak pets 🐣 — evolve with the 🔥 streak (TikTok-style) */
+.streak-pet {
+  display: inline-block; margin-left: 6px; font-size: 15px; line-height: 1;
+  animation: petBounce 2s ease-in-out infinite; cursor: help;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .25));
+}
+.streak-pet:hover { transform: scale(1.25); }
+.pet-baby { font-size: 13px; animation: petBounce 2.6s ease-in-out infinite; opacity: .9; }
+.pet-chick { font-size: 14px; animation: petBounce 2.4s ease-in-out infinite; }
+.pet-bunny { font-size: 15px; animation: petBounce 2.2s ease-in-out infinite, petWiggle 1.4s ease-in-out 1s infinite; }
+.pet-clever { font-size: 16px; animation: petBounce 2s ease-in-out infinite; filter: drop-shadow(0 2px 6px rgba(255, 140, 0, .4)); }
+.pet-mighty { font-size: 17px; animation: petBounce 1.9s ease-in-out infinite; filter: drop-shadow(0 2px 8px rgba(120, 80, 255, .5)); }
+.pet-epic { font-size: 18px; animation: petBounce 1.8s ease-in-out infinite, petGlow 1.6s ease-in-out infinite; }
+.pet-legend { font-size: 20px; animation: petBounce 1.6s ease-in-out infinite, petGlow 1.2s ease-in-out infinite; }
+@keyframes petBounce { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-4px); } 70% { transform: translateY(-1px); } }
+@keyframes petWiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
+@keyframes petGlow { 0%, 100% { filter: drop-shadow(0 0 4px rgba(255, 200, 0, .7)); } 50% { filter: drop-shadow(0 0 12px rgba(255, 200, 0, 1)); } }
+.row-pet { display: inline-flex; margin-left: 6px; }
+
 /* birthday picker in Settings */
 .bday-row { display: flex; gap: 8px; align-items: center; }
 .bday-sel {

@@ -741,14 +741,16 @@
       const dotOpt = isG ? {} : { dot: online };
       nextUnread.set(c.id, c.unread || 0);
       const bump = c.unread && prevUnread.get(c.id) !== c.unread;
-      const streak = (!isG && c.streak >= 2) ? `<span class="streak-badge">🔥${c.streak}</span>` : '';
+      const pet = (!isG && c.streak >= 2) ? streakPet(c.streak) : null;
+      const streak = pet ? `<span class="streak-pet ${pet.cl}" title="${pet.name} — ${c.streak}-day streak!">${pet.emoji}</span>` : '';
+      const streakNum = (!isG && c.streak >= 2) ? `<span class="streak-badge">🔥${c.streak}</span>` : '';
       const bday = (!isG && isBdayToday(friend)) ? '<span class="bday-badge">🎂</span>' : '';
       return `
         <div class="row ${c.unread ? 'unread' : ''} ${active ? 'active' : ''} ${c.pinned ? 'pinned' : ''}" style="--i:${Math.min(i, 12)}" data-open-conv="${c.id}" data-peer="${isG ? '' : friend.id}" data-group="${isG ? '1' : ''}">
           ${isG ? `<span class="av-wrap">${avatarHtml(au, dotOpt)}<span class="grp-badge">👥</span></span>` : avatarHtml(au, dotOpt)}
           <div class="row-main">
             <div class="row-top">
-              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(convTitle(c))}${streak}${bday}</span>
+              <span class="row-name">${c.pinned ? '<span class="row-pin">📌</span>' : ''}${escapeHtml(convTitle(c))}${pet ? `<span class="row-pet">${streak}</span>` : ''}${streakNum}${bday}</span>
               <span class="row-time">${c.muted ? '<span class="row-mute">🔕</span>' : ''}${c.lastMessage ? fmtTime(c.lastMessage.createdAt) : ''}</span>
             </div>
             <div class="row-top">
@@ -1217,13 +1219,27 @@
   }
 
   // Little chips next to the chat-header name: 🔥 streak and 🎂 birthday.
+  // Streak pets (TikTok-style): the pet evolves as the 🔥 streak grows.
+  function streakPet(n) {
+    if (n >= 100) return { emoji: '🐲', name: 'Legendary Dragon', cl: 'pet-legend' };
+    if (n >= 60) return { emoji: '🦄', name: 'Magical Unicorn', cl: 'pet-epic' };
+    if (n >= 30) return { emoji: '🐼', name: 'Mighty Panda', cl: 'pet-mighty' };
+    if (n >= 20) return { emoji: '🦊', name: 'Clever Fox', cl: 'pet-clever' };
+    if (n >= 10) return { emoji: '🐰', name: 'Energetic Bunny', cl: 'pet-bunny' };
+    if (n >= 5) return { emoji: '🐤', name: 'Happy Chick', cl: 'pet-chick' };
+    return { emoji: '🐣', name: 'Baby Chick', cl: 'pet-baby' };
+  }
   function updatePeerBadges() {
     const nameEl = $('#peer-name');
     if (!nameEl || !state.current) return;
     const conv = state.conversations.get(state.current.conversationId);
     const peer = state.current.peer;
     const bits = [];
-    if (conv && !conv.isGroup && conv.streak >= 2) bits.push(`<span class="streak-badge" title="Chat streak — message each other daily to keep it!">🔥${conv.streak}</span>`);
+    if (conv && !conv.isGroup && conv.streak >= 2) {
+      const pet = streakPet(conv.streak);
+      bits.push(`<span class="streak-pet ${pet.cl}" title="${pet.name} — ${conv.streak}-day streak! Keep chatting daily to raise your pet 🪺">${pet.emoji}</span>`);
+      bits.push(`<span class="streak-badge" title="Chat streak — message each other daily to keep it!">🔥${conv.streak}</span>`);
+    }
     if (peer && isBdayToday(peer)) bits.push('<span class="bday-badge" title="Birthday today!">🎂</span>');
     let b = document.getElementById('peer-badges');
     if (!bits.length) { if (b) b.remove(); return; }
