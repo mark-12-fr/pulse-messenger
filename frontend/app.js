@@ -35,7 +35,7 @@
       }, 480);
     };
     if (immediate) return doHide();
-    const remain = 2400 - (Date.now() - splashBootAt);
+    const remain = 1950 - (Date.now() - splashBootAt);
     if (remain > 0) setTimeout(doHide, remain);
     else doHide();
   }

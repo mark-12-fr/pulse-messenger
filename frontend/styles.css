@@ -1151,45 +1151,34 @@ html.resume #auth-screen { display: none; }
 }
 .splash.leave { opacity: 0; transform: scale(1.06); pointer-events: none; }
 
-/* animated tea cup with rising steam */
-.splash-cup { display: flex; justify-content: center; margin-bottom: 2px; }
-.splash-cup svg { overflow: visible; animation: splashPop .55s var(--ease) both; }
+/* animated tea cup with rising steam + pulsing glow */
+.splash-glow {
+  position: absolute; width: 230px; height: 230px; border-radius: 50%;
+  background: radial-gradient(circle, var(--accent) 0%, transparent 68%);
+  opacity: .14; filter: blur(28px); pointer-events: none;
+  animation: glowPulse 3s ease-in-out infinite;
+}
+@keyframes glowPulse { 0%, 100% { opacity: .1; transform: scale(.88); } 50% { opacity: .3; transform: scale(1.08); } }
+.splash-cup { display: flex; justify-content: center; margin-bottom: 4px; animation: splashPop .55s var(--ease) both; }
+.splash-cup svg { overflow: visible; animation: cupFloat 3.6s cubic-bezier(.45, 0, .55, 1) .45s infinite; }
+@keyframes cupFloat {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  35% { transform: translateY(-7px) rotate(-1.6deg); }
+  60% { transform: translateY(0) rotate(0deg); }
+  82% { transform: translateY(-3px) rotate(1.6deg); }
+}
 .s-body { fill: var(--accent); stroke: var(--accent-2); stroke-width: 1.5; }
 .s-handle { stroke: var(--accent-2); stroke-width: 4.5; stroke-linecap: round; }
 .s-saucer { stroke: var(--line); stroke-width: 4; stroke-linecap: round; }
-.steam { stroke: var(--accent); stroke-width: 3.4; stroke-linecap: round; fill: none; opacity: 0; }
-.s1 { animation: steamRise 2.1s ease-in-out .1s infinite; }
-.s2 { animation: steamRise 2.1s ease-in-out .7s infinite; }
-.s3 { animation: steamRise 2.1s ease-in-out 1.3s infinite; }
+.steam { stroke: var(--accent); stroke-width: 3.6; stroke-linecap: round; fill: none; opacity: 0; }
+.s1 { animation: steamRise 2.3s ease-in-out .15s infinite; }
+.s2 { animation: steamRise 2.3s ease-in-out .95s infinite; }
+.s3 { animation: steamRise 2.3s ease-in-out 1.7s infinite; }
 @keyframes steamRise {
-  0% { opacity: 0; transform: translateY(10px) scaleX(.8); }
-  30% { opacity: .9; }
-  100% { opacity: 0; transform: translateY(-16px) scaleX(1.2); }
-}
-
-/* "Tea" wordmark — letters dance in one by one */
-.splash-word {
-  display: flex; font-size: 56px; font-weight: 800; letter-spacing: 2px; line-height: 1;
-}
-.splash-letter {
-  background: var(--accent-grad);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: transparent;
-  animation: letterIn .85s cubic-bezier(.34, 1.56, .64, 1) var(--d) both;
-}
-@keyframes letterIn {
-  0% { opacity: 0; transform: translateY(30px) scale(.3) rotate(-10deg); }
-  100% { opacity: 1; transform: none; }
-}
-.splash-tag {
-  font-size: 13px; font-weight: 600; color: var(--text-soft);
-  letter-spacing: 3px; text-transform: uppercase;
-  animation: fadeUp .6s var(--ease) .7s both;
-}
-.splash-ring {
-  width: 26px; height: 26px; border-radius: 50%;
-  border: 3px solid var(--line); border-top-color: var(--accent);
-  animation: spin .8s linear infinite, fadeIn .5s var(--ease) 1s both;
+  0% { opacity: 0; transform: translateY(13px) scaleX(.7); }
+  25% { opacity: .95; }
+  55% { opacity: .55; transform: translateY(-7px) scaleX(1); }
+  100% { opacity: 0; transform: translateY(-19px) scaleX(1.35); }
 }
 .splash-note {
   font-size: 13.5px; font-weight: 600; color: var(--text-soft);
