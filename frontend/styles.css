@@ -1180,6 +1180,21 @@ html.resume #auth-screen { display: none; }
   55% { opacity: .55; transform: translateY(-7px) scaleX(1); }
   100% { opacity: 0; transform: translateY(-19px) scaleX(1.35); }
 }
+/* "Tea" wordmark — letters dance in one by one */
+.splash-word {
+  display: flex; font-size: 56px; font-weight: 800; letter-spacing: 2px; line-height: 1;
+  margin-top: 6px;
+}
+.splash-letter {
+  background: var(--accent-grad);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: letterIn .85s cubic-bezier(.34, 1.56, .64, 1) var(--d) both;
+}
+@keyframes letterIn {
+  0% { opacity: 0; transform: translateY(30px) scale(.3) rotate(-10deg); }
+  100% { opacity: 1; transform: none; }
+}
 .splash-note {
   font-size: 13.5px; font-weight: 600; color: var(--text-soft);
   text-align: center; max-width: 260px; padding: 0 20px;
