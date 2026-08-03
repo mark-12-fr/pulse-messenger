@@ -1362,6 +1362,36 @@ html.theme-anim * { transition: background-color .5s var(--ease), color .45s var
 }
 .row-pet { display: inline-flex; margin-left: 6px; vertical-align: -3px; }
 
+/* companion streak pet — floats on the right side inside the chat room */
+.chat-pet {
+  position: absolute; right: 16px; bottom: 78px; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  pointer-events: none; opacity: .9;
+  animation: petFloat 4.2s cubic-bezier(.45, 0, .55, 1) infinite;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .22));
+  transition: opacity .3s ease;
+}
+.chat-pet.hidden { display: none; }
+.chat-pet-svg { display: flex; }
+.chat-pet-svg svg { width: 54px; height: 54px; display: block; }
+.chat-pet-tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: rgba(15, 20, 30, .55); color: #fff; border-radius: 20px;
+  padding: 2px 9px; font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+.chat-pet-tag svg { width: 10px; height: 10px; }
+.chat-pet.pet-pop .chat-pet-svg svg { animation: petPop .65s cubic-bezier(.34, 1.56, .64, 1) 1; }
+@keyframes petPop {
+  0% { transform: scale(.55) rotate(-12deg); }
+  55% { transform: scale(1.28) rotate(7deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@media (max-width: 560px) {
+  .chat-pet { right: 10px; bottom: 72px; }
+  .chat-pet-svg svg { width: 44px; height: 44px; }
+}
+
 /* birthday picker in Settings */
 .bday-row { display: flex; gap: 8px; align-items: center; }
 .bday-sel {

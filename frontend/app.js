@@ -1241,7 +1241,26 @@
     if (n >= 5) return { svg: PET_SVGS.chick, name: 'Happy Chick', cl: 'pet-chick' };
     return { svg: PET_SVGS.baby, name: 'Baby Chick', cl: 'pet-baby' };
   }
+  // Companion streak pet floating on the right side of the chat room.
+  function renderChatPet() {
+    const el = document.getElementById('chat-pet');
+    if (!el) return;
+    const conv = state.current ? state.conversations.get(state.current.conversationId) : null;
+    if (!conv || conv.isGroup || conv.streak < 2) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+    const pet = streakPet(conv.streak);
+    el.innerHTML = `<span class="chat-pet-svg ${pet.cl}" title="${pet.name} — ${conv.streak}-day streak!">${pet.svg}</span><span class="chat-pet-tag">${IC.flame}${conv.streak}</span>`;
+    el.classList.remove('hidden');
+    if (renderChatPet._last !== conv.streak) {
+      renderChatPet._last = conv.streak;
+      el.classList.remove('pet-pop');
+      void el.offsetWidth;
+      el.classList.add('pet-pop');
+      setTimeout(() => el.classList.remove('pet-pop'), 700);
+    }
+  }
+
   function updatePeerBadges() {
+    renderChatPet();
     const nameEl = $('#peer-name');
     if (!nameEl || !state.current) return;
     const conv = state.conversations.get(state.current.conversationId);
