@@ -1248,7 +1248,7 @@
     const conv = state.current ? state.conversations.get(state.current.conversationId) : null;
     if (!conv || conv.isGroup || conv.streak < 2) { el.classList.add('hidden'); el.innerHTML = ''; return; }
     const pet = streakPet(conv.streak);
-    el.innerHTML = `<span class="chat-pet-svg ${pet.cl}" title="${pet.name} — ${conv.streak}-day streak!">${pet.svg}</span><span class="chat-pet-tag">${IC.flame}${conv.streak}</span>`;
+    el.innerHTML = `<span class="chat-pet-svg ${pet.cl}" title="${pet.name} — ${conv.streak}-day streak!">${pet.svg}</span>`;
     el.classList.remove('hidden');
     if (renderChatPet._last !== conv.streak) {
       renderChatPet._last = conv.streak;
