@@ -45,7 +45,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260703e" />
+  <link rel="stylesheet" href="/styles.css?v=20260803a" />
 </head>
 <body>
 
@@ -60,10 +60,26 @@
     </div>
   </div>
 
-  <!-- splash shown while resuming a saved session (no login-page flash) -->
+  <!-- Branded intro splash — animated Tea wordmark on every open -->
   <div id="splash" class="splash">
-    <div class="splash-logo">🍵</div>
+    <div class="splash-cup">
+      <svg viewBox="0 0 72 72" width="74" height="74" fill="none" aria-hidden="true">
+        <path class="steam s1" d="M27 20c-5-5-5-11 0-16" />
+        <path class="steam s2" d="M36 18c-5-5-5-11 0-16" />
+        <path class="steam s3" d="M45 20c-5-5-5-11 0-16" />
+        <path class="s-body" d="M17 27h31a4 4 0 0 1 4 4v10a21 21 0 0 1-39 0V31a4 4 0 0 1 4-4Z" />
+        <path class="s-handle" d="M48 29h4a9 9 0 0 1 0 18h-4" />
+        <path class="s-saucer" d="M12 58h48M18 63h36" />
+      </svg>
+    </div>
+    <div class="splash-word" aria-label="Tea">
+      <span class="splash-letter" style="--d:.05s">T</span>
+      <span class="splash-letter" style="--d:.18s">e</span>
+      <span class="splash-letter" style="--d:.31s">a</span>
+    </div>
+    <div class="splash-tag">chat · share · connect</div>
     <div class="splash-ring"></div>
+    <div class="splash-note"></div>
   </div>
 
   <!-- ============================== AUTH SCREEN ============================== -->
@@ -321,7 +337,7 @@
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
-  <script src="/config.js?v=20260703e"></script>
-  <script src="/app.js?v=20260703e"></script>
+  <script src="/config.js?v=20260803a"></script>
+  <script src="/app.js?v=20260803a"></script>
 </body>
 </html>

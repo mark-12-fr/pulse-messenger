@@ -114,6 +114,11 @@ class Conversation(Base):
     streak_date = mapped_column(String(10), nullable=True)     # last counted day
     streak_a_date = mapped_column(String(10), nullable=True)   # user_a's last message day
     streak_b_date = mapped_column(String(10), nullable=True)   # user_b's last message day
+    # Per-user "hide read receipts" flag (1-to-1 only): when set for a user,
+    # the server still marks their messages read (keeps unread counts correct)
+    # but never notifies the partner with a "message:read" event.
+    hide_read_a = mapped_column(Boolean, nullable=False, default=False)
+    hide_read_b = mapped_column(Boolean, nullable=False, default=False)
     created_at = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("user_a", "user_b", name="uq_conv_pair"),)
 
@@ -340,6 +345,8 @@ def init_db():
     _migrate_column("conversations", "streak_date", "VARCHAR(10)")
     _migrate_column("conversations", "streak_a_date", "VARCHAR(10)")
     _migrate_column("conversations", "streak_b_date", "VARCHAR(10)")
+    _migrate_column("conversations", "hide_read_a", "BOOLEAN DEFAULT FALSE")
+    _migrate_column("conversations", "hide_read_b", "BOOLEAN DEFAULT FALSE")
     # reel_views predates this feature; enforce one-view-per-user (dedupe first,
     # since a UNIQUE index can't be created while duplicate rows exist)
     _migrate_sql(
@@ -743,6 +750,34 @@ def conversation_partner_id(conv, me_id):
     if not conv or conv.get("is_group"):
         return None
     return conv["user_b"] if conv["user_a"] == me_id else conv["user_a"]
+
+
+def set_hide_read(conversation_id, user_id, value):
+    """Per-user 'hide read receipts' flag. Returns True if set, False if the
+    user is not part of the conversation."""
+    with session_scope() as s:
+        conv = s.get(Conversation, conversation_id)
+        if not conv or conv.is_group:
+            return False
+        if conv.user_a == user_id:
+            conv.hide_read_a = bool(value)
+        elif conv.user_b == user_id:
+            conv.hide_read_b = bool(value)
+        else:
+            return False
+        return True
+
+
+def get_hide_read(conversation_id, user_id):
+    with session_scope() as s:
+        conv = s.get(Conversation, conversation_id)
+        if not conv or conv.is_group:
+            return False
+        if conv.user_a == user_id:
+            return bool(conv.hide_read_a)
+        if conv.user_b == user_id:
+            return bool(conv.hide_read_b)
+        return False
 
 
 def conversation_member_ids(conv):

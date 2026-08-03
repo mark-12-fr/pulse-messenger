@@ -783,6 +783,7 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 }
 @keyframes cardIn { from { opacity: 0; transform: translateY(22px) scale(.97); } to { opacity: 1; transform: none; } }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
 @keyframes zoomIn { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
@@ -892,6 +893,8 @@ html[data-theme="dark"] .theme-btn .ic-moon { display: none; }
 .emoji-pick:active { transform: scale(1.25); }
 .mm-actions { background: var(--elev); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); }
 .mm-act { display: block; width: 100%; border: none; background: transparent; color: var(--text); padding: 15px 18px; font-size: 16px; font-weight: 600; text-align: center; border-bottom: 1px solid var(--line); transition: background .15s; }
+.mm-act .mm-tick { display: inline-block; width: 22px; opacity: 0; font-weight: 800; color: var(--accent); transform: scale(.5); transition: transform .25s cubic-bezier(.34, 1.56, .64, 1), opacity .2s; }
+.mm-act.on .mm-tick { opacity: 1; transform: scale(1); }
 .mm-act:last-child { border-bottom: none; }
 .mm-act:active { background: var(--hover); }
 .mm-act.danger { color: var(--danger); }
@@ -1136,29 +1139,60 @@ input::placeholder, textarea::placeholder {
 @keyframes splashPop { from { opacity: 0; transform: scale(.5) rotate(-18deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
 @keyframes slideInLeft { from { opacity: 0; transform: translateX(-34px); } to { opacity: 1; transform: none; } }
 
-#splash { display: none; }
-html.resume #splash { display: flex; }
+/* the branded intro shows on every open (not just session resume) */
+#splash { display: flex; }
 html.resume #auth-screen { display: none; }
 
 .splash {
   position: fixed; inset: 0; z-index: 500;
-  flex-direction: column; align-items: center; justify-content: center; gap: 26px;
-  background: radial-gradient(120% 90% at 50% 28%, var(--bg-2), var(--bg) 70%);
+  flex-direction: column; align-items: center; justify-content: center; gap: 13px;
+  background: radial-gradient(120% 90% at 50% 24%, var(--bg-2), var(--bg) 70%);
+  transition: opacity .45s var(--ease), transform .45s var(--ease);
 }
-.splash-logo {
-  font-size: 46px; width: 96px; height: 96px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--accent-grad); border-radius: 28px;
-  box-shadow: 0 22px 55px rgba(10, 124, 255, .42);
-  animation: splashPop .6s var(--ease) both, logoFloat 3.2s ease-in-out .6s infinite;
+.splash.leave { opacity: 0; transform: scale(1.06); pointer-events: none; }
+
+/* animated tea cup with rising steam */
+.splash-cup { display: flex; justify-content: center; margin-bottom: 2px; }
+.splash-cup svg { overflow: visible; animation: splashPop .55s var(--ease) both; }
+.s-body { fill: var(--accent); stroke: var(--accent-2); stroke-width: 1.5; }
+.s-handle { stroke: var(--accent-2); stroke-width: 4.5; stroke-linecap: round; }
+.s-saucer { stroke: var(--line); stroke-width: 4; stroke-linecap: round; }
+.steam { stroke: var(--accent); stroke-width: 3.4; stroke-linecap: round; fill: none; opacity: 0; }
+.s1 { animation: steamRise 2.1s ease-in-out .1s infinite; }
+.s2 { animation: steamRise 2.1s ease-in-out .7s infinite; }
+.s3 { animation: steamRise 2.1s ease-in-out 1.3s infinite; }
+@keyframes steamRise {
+  0% { opacity: 0; transform: translateY(10px) scaleX(.8); }
+  30% { opacity: .9; }
+  100% { opacity: 0; transform: translateY(-16px) scaleX(1.2); }
+}
+
+/* "Tea" wordmark — letters dance in one by one */
+.splash-word {
+  display: flex; font-size: 56px; font-weight: 800; letter-spacing: 2px; line-height: 1;
+}
+.splash-letter {
+  background: var(--accent-grad);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: letterIn .85s cubic-bezier(.34, 1.56, .64, 1) var(--d) both;
+}
+@keyframes letterIn {
+  0% { opacity: 0; transform: translateY(30px) scale(.3) rotate(-10deg); }
+  100% { opacity: 1; transform: none; }
+}
+.splash-tag {
+  font-size: 13px; font-weight: 600; color: var(--text-soft);
+  letter-spacing: 3px; text-transform: uppercase;
+  animation: fadeUp .6s var(--ease) .7s both;
 }
 .splash-ring {
-  width: 38px; height: 38px; border-radius: 50%;
+  width: 26px; height: 26px; border-radius: 50%;
   border: 3px solid var(--line); border-top-color: var(--accent);
-  animation: spin .8s linear infinite;
+  animation: spin .8s linear infinite, fadeIn .5s var(--ease) 1s both;
 }
 .splash-note {
-  font-size: 14px; font-weight: 600; color: var(--text-soft);
+  font-size: 13.5px; font-weight: 600; color: var(--text-soft);
   text-align: center; max-width: 260px; padding: 0 20px;
   animation: fadeUp .4s var(--ease) both;
 }
@@ -1410,6 +1444,38 @@ html.theme-anim * { transition: background-color .5s var(--ease), color .45s var
 .pet-next-svg { display: inline-flex; }
 .pet-next-svg svg { width: 26px; height: 26px; animation: petFloat 3.4s cubic-bezier(.45, 0, .55, 1) infinite; }
 .pet-next.maxed { color: var(--text); font-weight: 650; }
+
+/* ===================== streak milestone celebration 🎉 ===================== */
+.celebration {
+  position: fixed; inset: 0; z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(8, 10, 18, 0);
+  opacity: 0; transition: opacity .22s ease;
+}
+.celebration.show { opacity: 1; background: rgba(8, 10, 18, .55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.celebration.leave { opacity: 0; }
+.celebration.leave .celeb-card { transform: scale(.85); }
+.cf-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.cf-layer i { position: absolute; top: -18px; display: block; border-radius: 2px; opacity: .95; animation-name: confettiFall; animation-timing-function: ease-in; animation-iteration-count: infinite; }
+.cf-circle { border-radius: 50% !important; }
+@keyframes confettiFall {
+  0% { transform: translate(0, -18px) rotate(0deg); opacity: .95; }
+  100% { transform: translate(var(--r, 30px), 105vh) rotate(var(--r, 360deg)); opacity: .55; }
+}
+.celeb-card {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 8px; padding: 30px 34px 24px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 24px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .35);
+  transform: scale(.85); transition: transform .38s var(--spring);
+  max-width: min(340px, 88vw);
+}
+.celebration.show .celeb-card { transform: scale(1); }
+.celeb-pet { display: inline-flex; }
+.celeb-pet svg { width: 84px; height: 84px; filter: drop-shadow(0 8px 22px rgba(0, 0, 0, .35)); animation: petFloat 3.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+.celeb-title { font-size: 26px; font-weight: 800; background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.celeb-sub { font-size: 13.5px; color: var(--text-soft); line-height: 1.5; max-width: 260px; }
+.celeb-btn { margin-top: 10px; align-self: stretch; }
 
 /* birthday picker in Settings */
 .bday-row { display: flex; gap: 8px; align-items: center; }

@@ -19,6 +19,27 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  // ---------- branded intro splash ----------
+  // The animated Tea wordmark plays on every open; we never hide the splash
+  // before the wordmark has had time to show (~2.4s), so a fast app start
+  // still feels like a deliberate, polished intro.
+  const splashBootAt = Date.now();
+  function hideSplash(immediate) {
+    const el = document.getElementById('splash');
+    if (!el || el.classList.contains('leave') || el.classList.contains('hidden')) return;
+    const doHide = () => {
+      el.classList.add('leave');
+      setTimeout(() => {
+        el.classList.add('hidden');
+        document.documentElement.classList.remove('resume');
+      }, 480);
+    };
+    if (immediate) return doHide();
+    const remain = 2400 - (Date.now() - splashBootAt);
+    if (remain > 0) setTimeout(doHide, remain);
+    else doHide();
+  }
+
   // ---- deter casual right-click / view-source / inspect (NOT real security) ----
   document.addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('keydown', (e) => {
@@ -295,8 +316,7 @@
     conversationsReady = false;
     pendingOpenConv = null;
     try { if ('clearAppBadge' in navigator) navigator.clearAppBadge().catch(() => {}); } catch (e) {}
-    document.documentElement.classList.remove('resume');
-    $('#splash').classList.add('hidden');
+    hideSplash(true);
     appScreen.classList.add('hidden');
     authScreen.classList.remove('hidden');
     setAuthMode('login');
@@ -463,7 +483,7 @@
   async function enterApp() {
     clearAppUI();
     authScreen.classList.add('hidden');
-    $('#splash').classList.add('hidden');
+    hideSplash();
     appScreen.classList.remove('hidden');
 
     // header
@@ -1230,6 +1250,42 @@
     unicorn: '<svg viewBox="0 0 24 24" width="21" height="21"><g fill="none" stroke="#8f7ac0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.6 21v-4.6c0-3.2 2.4-5.6 5.4-5.6 3 0 5.4 2.4 5.4 5.6V21Z" fill="#fff"/><path d="M9.1 8.4c-2.3.2-3.7-1.4-3.9-3.6 2.3.3 3.6 1.5 3.9 3.6ZM14.9 8.4c2.3.2 3.7-1.4 3.9-3.6-2.3.3-3.6 1.5-3.9 3.6Z" fill="#FFD9E2" stroke="none"/><path d="M12 11.4V7" stroke-width="2"/><path d="M12 7 10.1 1.6h3.8Z" fill="#FFD23F" stroke="none"/><path d="M10.1 17.4h.01M13.9 17.4h.01" stroke-width="2.2"/><path d="M11.3 19l.7 1.3.7-1.3Z" fill="#FF9FB0" stroke="none"/></g></svg>',
     dragon: '<svg viewBox="0 0 24 24" width="22" height="22"><g fill="none" stroke="#2e7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.1 9.6c-.7-2.2.4-4.4 2.5-5.4M15.9 9.6c.7-2.2-.4-4.4-2.5-5.4" stroke-width="1.5"/><circle cx="12" cy="14.8" r="6.3" fill="#56C271"/><path d="M7.6 13c-2.3-.9-3.8-2.5-4.2-4.7 2.2-.6 3.9.6 4.2 2.7-.1.8-.1 1.4 0 2ZM16.4 13c2.3-.9 3.8-2.5 4.2-4.7-2.2-.6-3.9.6-4.2 2.7.1.8.1 1.4 0 2Z" fill="#56C271"/><path d="M10.1 12.6h.01M13.9 12.6h.01" stroke-width="2.2"/><path d="M12 14.8v2.6l1.7-1.4Z" fill="#FF7A00" stroke="none"/><path d="M17.6 12.2c1.8 1 2.8 2.4 3.1 4.1-.5.5-1.1.7-1.6.5-.3-1.3-1-2.3-1.5-3.2Z" fill="#FF9E45"/></g></svg>',
   };
+  // Streak landmark days that trigger a confetti celebration (TikTok-style).
+  const MILESTONE_DAYS = [7, 14, 30, 60, 100];
+
+  // Full-screen confetti + pet card when a conversation's streak lands on a
+  // milestone day. One at a time; auto-dismisses; tap anywhere to close.
+  function celebrateStreak(streak) {
+    if (document.hidden) return;
+    const old = document.getElementById('celebration');
+    if (old) old.remove();
+    const pet = streakPet(streak);
+    const colors = ['#ff5d5d', '#ffb703', '#4ad295', '#4ea8ff', '#c77dff', '#ff77d0', '#ffd23f'];
+    const bits = [];
+    for (let i = 0; i < 52; i++) {
+      const kind = i % 3 === 0 ? 'cf-circle' : 'cf-rect';
+      const size = (6 + Math.random() * 7).toFixed(1);
+      bits.push(`<i class="${kind}" style="left:${(Math.random() * 100).toFixed(2)}%;width:${size}px;height:${size}px;background:${colors[i % colors.length]};animation-duration:${(2.6 + Math.random() * 1.6).toFixed(2)}s;animation-delay:${(Math.random() * 0.7).toFixed(2)}s;--r:${(Math.random() * 360).toFixed(0)}deg"></i>`);
+    }
+    const wrap = document.createElement('div');
+    wrap.id = 'celebration';
+    wrap.className = 'celebration';
+    wrap.innerHTML = `
+      <div class="cf-layer">${bits.join('')}</div>
+      <div class="celeb-card">
+        <span class="celeb-pet ${pet.cl}">${pet.svg}</span>
+        <div class="celeb-title">🔥 ${streak}-day streak!</div>
+        <div class="celeb-sub">${pet.name} leveled up! Keep the tea hot and chat again tomorrow 🍵</div>
+        <button class="btn-primary celeb-btn">Nice!</button>
+      </div>`;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add('show'));
+    const dismiss = () => { wrap.classList.add('leave'); setTimeout(() => wrap.remove(), 400); };
+    wrap.querySelector('.celeb-btn').addEventListener('click', dismiss);
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) dismiss(); });
+    setTimeout(dismiss, 3800);
+  }
+
   // Little chips next to the chat-header name: 🔥 streak and 🎂 birthday.
   // Streak pets (TikTok-style): the pet evolves as the 🔥 streak grows.
   function streakPet(n) {
@@ -2543,7 +2599,12 @@
     conv.lastMessage = msg;
     conv.friend = friend;
     conv.archived = false; // a new message revives an archived chat
+    const prevStreak = conv.streak;
     if (typeof env.streak === 'number') conv.streak = env.streak; // 🔥
+    // TikTok-style milestone celebration when the streak lands on a landmark day
+    if (typeof prevStreak === 'number' && conv.streak > prevStreak && MILESTONE_DAYS.indexOf(conv.streak) !== -1) {
+      celebrateStreak(conv.streak);
+    }
 
     // I received it — tell the sender it was delivered (✓✓), even if I'm not
     // looking at this chat right now.
@@ -3676,6 +3737,7 @@
           <button class="mm-act" data-archive="1">${conv.archived ? 'Unarchive' : '📦 Archive'}</button>
           <button class="mm-act" data-profile="1">View profile</button>
           <button class="mm-act" data-wallpaper="1">Chat wallpaper</button>
+          <button class="mm-act" data-hideread="1"><span class="mm-tick">✓</span>Hide read receipts</button>
           <button class="mm-act" data-rename="1">Rename</button>
           <button class="mm-act" data-delconv="1">Delete conversation</button>
           <button class="mm-act ${peer.iBlocked ? '' : 'danger'}" data-block="1">${peer.iBlocked ? 'Unblock' : 'Block'} ${escapeHtml(friendName(peer))}</button>
@@ -3686,12 +3748,27 @@
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 220); };
+    // reflect the server-side read-receipt preference on the toggle
+    api('/api/conversations/' + cid + '/read-settings').then((r) => {
+      if (!r || typeof r.hideRead !== 'boolean') return;
+      const b = overlay.querySelector('[data-hideread]');
+      if (b) b.classList.toggle('on', r.hideRead);
+    }).catch(() => {});
     overlay.addEventListener('click', (e) => {
       if (e.target.closest('[data-pin]')) { close(); toggleConvPref(cid, 'pinned', !conv.pinned); return; }
       if (e.target.closest('[data-mute]')) { close(); toggleConvPref(cid, 'muted', !conv.muted); return; }
       if (e.target.closest('[data-archive]')) { close(); toggleConvPref(cid, 'archived', !conv.archived); return; }
       if (e.target.closest('[data-profile]')) { close(); openProfile(peer, cid); return; }
       if (e.target.closest('[data-wallpaper]')) { close(); openWallpaperPicker(cid); return; }
+      if (e.target.closest('[data-hideread]')) {
+        const btn = e.target.closest('[data-hideread]');
+        const want = !btn.classList.contains('on');
+        btn.classList.toggle('on', want);
+        haptic();
+        api('/api/conversations/' + cid + '/read-settings', { method: 'POST', body: { hideRead: want } })
+          .catch(() => btn.classList.toggle('on', !want));
+        return;
+      }
       if (e.target.closest('[data-rename]')) { close(); openRenameFriend(peer); return; }
       if (e.target.closest('[data-delconv]')) { close(); if (confirm('Delete this conversation for both of you?')) deleteConversation(cid); return; }
       if (e.target.closest('[data-block]')) { close(); toggleBlock(peer, !peer.iBlocked); return; }
@@ -5226,7 +5303,7 @@
     setAuthMode('login');
     // Wake the backend early (Render free tier sleeps) so login feels instant.
     try { fetch(API_BASE + '/api/health', { cache: 'no-store' }).catch(() => {}); } catch (e) {}
-    if (!state.token) return; // show auth screen
+    if (!state.token) return hideSplash(); // fresh visitor: intro plays, then login
     // Returning user: wait out a possible cold start rather than giving up
     // after a few seconds. Keep the splash up and auto-enter once /api/me
     // succeeds; only reveal the login screen if the server never comes back.
@@ -5246,8 +5323,7 @@
     }
     showAuthMsg('Server is taking longer than usual — please try again in a moment.', 'error');
     setSplashNote('');
-    document.documentElement.classList.remove('resume');
-    $('#splash').classList.add('hidden');
+    hideSplash(true);
   }
 
   // Deep-links: /?open=<conversationId> (notification tap) · /?add=<username> (invite) · /?call=<callId>&from=<userId>&media=<audio|video>

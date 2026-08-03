@@ -794,6 +794,30 @@ def conversations():
     return jsonify(conversations=db.list_conversations(g.user["id"]))
 
 
+@app.get("/api/conversations/<int:cid>/read-settings")
+@auth_required
+def conversation_read_settings(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Conversation not found."), 404
+    return jsonify(hideRead=db.get_hide_read(cid, me_id))
+
+
+@app.post("/api/conversations/<int:cid>/read-settings")
+@auth_required
+def set_conversation_read_settings(cid):
+    me_id = g.user["id"]
+    conv = db.get_conversation_by_id(cid)
+    if not db.is_conversation_member(conv, me_id):
+        return jsonify(error="Conversation not found."), 404
+    data = request.get_json(silent=True) or {}
+    hide = bool(data.get("hideRead"))
+    if not db.set_hide_read(cid, me_id, hide):
+        return jsonify(error="Cannot update read settings for this conversation."), 400
+    return jsonify(ok=True, hideRead=hide)
+
+
 @app.post("/api/conversations/<int:cid>/prefs")
 @auth_required
 def conversation_prefs(cid):
@@ -845,7 +869,7 @@ def conversation_messages(cid):
     # --- 1-to-1 conversation ---
     partner_id = db.conversation_partner_id(conv, me_id)
     partner = db.get_user_by_id(partner_id) or {}
-    if messages:
+    if messages and not db.get_hide_read(cid, me_id):
         emit_to_user(partner_id, "message:read",
                      {"conversationId": cid, "byUserId": me_id, "lastReadMessageId": messages[-1]["id"]})
     return jsonify(
@@ -1702,7 +1726,7 @@ def on_message_read(payload):
     # Reading implies delivered too — keep the delivered marker in step.
     db.mark_conversation_delivered(cid, uid)
     # Per-message seen ticks are only shown in 1-to-1 chats.
-    if not conv.get("is_group"):
+    if not conv.get("is_group") and not db.get_hide_read(cid, uid):
         partner_id = db.conversation_partner_id(conv, uid)
         emit_to_user(partner_id, "message:read",
                      {"conversationId": cid, "byUserId": uid, "lastReadMessageId": last["id"]})
