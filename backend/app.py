@@ -270,6 +270,36 @@ socketio = SocketIO(
     ping_timeout=15,
 )
 
+
+# ---------------------------------------------------------------------------
+# Security headers (see also the CSP <meta> in frontend/index.html, which
+# covers the static page since GitHub Pages can't set response headers)
+# ---------------------------------------------------------------------------
+@app.after_request
+def _security_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Permissions-Policy"] = (
+        "geolocation=(), camera=(self), microphone=(self), payment=(), usb=(), "
+        "magnetometer=(), gyroscope=()"
+    )
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob: https:; "
+        "media-src 'self' blob: https:; "
+        "connect-src 'self' https: wss: ws:; "
+        "object-src 'none'; base-uri 'self'; form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
+    if request.is_secure:
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return resp
+
+
 AVATAR_COLORS = [
     "#0084ff", "#7646ff", "#ff5e3a", "#13b955", "#ff9500",
     "#e0457b", "#00b8d4", "#8e44ad", "#16a085", "#d35400",

@@ -17,6 +17,12 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)" />
 
+  <!-- security: GitHub Pages can't send headers, so these page-level policies
+       live here as meta tags (the API adds the same headers server-side) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https: wss: ws:; object-src 'none'; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="no-referrer" />
+  <meta http-equiv="Permissions-Policy" content="geolocation=(), camera=(self), microphone=(self), payment=(), usb=(), magnetometer=(), gyroscope=()" />
+
   <!-- apply saved/system theme before first paint (no flash) -->
   <script>
     (function () {
