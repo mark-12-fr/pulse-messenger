@@ -295,7 +295,10 @@ def _security_headers(resp):
         "object-src 'none'; base-uri 'self'; form-action 'self'; "
         "frame-ancestors 'none'"
     )
-    if request.is_secure:
+    # Behind a reverse proxy (Railway/Vercel) Flask sees plain HTTP, so check
+    # the forwarded proto instead of request.is_secure.
+    fwd_proto = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip()
+    if fwd_proto == "https" or request.is_secure:
         resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return resp
 
